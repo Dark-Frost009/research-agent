@@ -40,5 +40,8 @@ class Settings(BaseSettings):
     max_search_results_per_query: int = Field(default=5, ge=1)
     max_sources: int = Field(default=12, ge=1)
 
-    # Network
+    # Network / extraction
     request_timeout_seconds: float = Field(default=15.0, gt=0)
+    max_response_bytes: int = Field(default=2 * 1024 * 1024, ge=1)
+    max_text_chars: int = Field(default=100_000, ge=1)
+    max_redirects: int = Field(default=5, ge=0)

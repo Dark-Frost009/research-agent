@@ -187,3 +187,53 @@ def test_request_timeout_accepts_positive_values(value):
     settings = _settings(request_timeout_seconds=value)
 
     assert settings.request_timeout_seconds == value
+
+def test_extraction_defaults():
+    settings = _settings()
+
+    assert settings.max_response_bytes == 2 * 1024 * 1024
+    assert settings.max_text_chars == 100_000
+    assert settings.max_redirects == 5
+
+
+def test_extraction_limits_can_be_loaded_from_environment(monkeypatch):
+    monkeypatch.setenv("MAX_RESPONSE_BYTES", "500000")
+    monkeypatch.setenv("MAX_TEXT_CHARS", "25000")
+    monkeypatch.setenv("MAX_REDIRECTS", "3")
+
+    settings = _settings()
+
+    assert settings.max_response_bytes == 500000
+    assert settings.max_text_chars == 25000
+    assert settings.max_redirects == 3
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "max_response_bytes",
+        "max_text_chars",
+    ],
+)
+def test_positive_extraction_limits_reject_zero(field_name):
+    with pytest.raises(ValidationError):
+        _settings(**{field_name: 0})
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "max_response_bytes",
+        "max_text_chars",
+        "max_redirects",
+    ],
+)
+def test_extraction_limits_reject_negative_values(field_name):
+    with pytest.raises(ValidationError):
+        _settings(**{field_name: -1})
+
+
+def test_zero_redirects_is_valid():
+    settings = _settings(max_redirects=0)
+
+    assert settings.max_redirects == 0
