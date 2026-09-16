@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # Research budgets
     max_research_iterations: int = Field(default=2, ge=1)
+    max_sub_questions: int = Field(default=5, ge=1)
     max_search_queries: int = Field(default=8, ge=1)
     max_search_results_per_query: int = Field(default=5, ge=1)
     max_sources: int = Field(default=12, ge=1)

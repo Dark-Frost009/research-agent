@@ -237,3 +237,35 @@ def test_zero_redirects_is_valid():
     settings = _settings(max_redirects=0)
 
     assert settings.max_redirects == 0
+
+def test_max_sub_questions_default():
+    settings = _settings()
+
+    assert settings.max_sub_questions == 5
+
+
+def test_max_sub_questions_can_be_loaded_from_environment(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "MAX_SUB_QUESTIONS",
+        "7",
+    )
+
+    settings = _settings()
+
+    assert settings.max_sub_questions == 7
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0,
+        -1,
+    ],
+)
+def test_max_sub_questions_rejects_non_positive_values(value):
+    with pytest.raises(ValidationError):
+        _settings(
+            max_sub_questions=value,
+        )    
