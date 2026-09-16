@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "tavily-python>=0.8.3,<0.9",
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.12,<5",
 ]
 
 [project.optional-dependencies]
