@@ -10,11 +10,18 @@ These tests do not call an LLM. They verify:
 
 import pytest
 from pydantic import ValidationError
+from dataclasses import FrozenInstanceError
 
 from research_agent.graph.nodes.synthesis import (
     SynthesizedClaim,
+    Synthesizer,
     SynthesisResponse,
+    SynthesisResult,
+    SynthesisValidationError,
 )
+from research_agent.llm.client import LLMResponseError
+from research_agent.models.schemas import Citation
+
 from research_agent.models.schemas import Evidence
 from research_agent.prompts.synthesis import (
     SYNTHESIS_SYSTEM_PROMPT,
@@ -845,3 +852,1041 @@ def test_nested_claim_requires_evidence_handle():
                 }
             ],
         )
+
+# ---------------------------------------------------------------------------
+# Synthesizer behavior
+# ---------------------------------------------------------------------------
+
+
+class FakeSynthesisLLM:
+    """Fake structured-output LLM for Synthesizer tests."""
+
+    def __init__(
+        self,
+        response,
+    ):
+        self.response = response
+        self.calls = []
+
+    def generate_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        raise AssertionError(
+            "Synthesizer must not call generate_text()."
+        )
+
+    def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_model,
+    ):
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "response_model": response_model,
+            }
+        )
+
+        return self.response
+
+
+def test_synthesis_result_is_frozen():
+    result = SynthesisResult(
+        content="Grounded answer.",
+        citations=[],
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        result.content = "Changed"
+
+
+def test_synthesizer_creates_grounded_result():
+    claim_text = (
+        "The intervention reduced processing time."
+    )
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=claim_text,
+            claims=[
+                {
+                    "claim_text": claim_text,
+                    "evidence_handles": [
+                        "E1",
+                    ],
+                }
+            ],
+        )
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+        citation_id_factory=lambda: "cit_one",
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What effect did the intervention have?",
+        evidence=[
+            _evidence(
+                id="ev_one",
+                excerpt=(
+                    "The intervention reduced processing time."
+                ),
+            )
+        ],
+    )
+
+    assert isinstance(
+        result,
+        SynthesisResult,
+    )
+
+    assert result.content == claim_text
+
+    assert len(
+        result.citations
+    ) == 1
+
+    assert isinstance(
+        result.citations[0],
+        Citation,
+    )
+
+    assert result.citations[0].id == "cit_one"
+    assert result.citations[0].claim_text == claim_text
+    assert result.citations[0].evidence_ids == [
+        "ev_one",
+    ]
+
+
+def test_synthesizer_calls_llm_with_expected_contract():
+    evidence = [
+        _evidence(
+            id="ev_internal_secret",
+            excerpt="Grounded source statement.",
+        )
+    ]
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content="Grounded answer.",
+            claims=[],
+        )
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=evidence,
+    )
+
+    assert len(
+        llm.calls
+    ) == 1
+
+    call = llm.calls[0]
+
+    assert call["system_prompt"] == (
+        SYNTHESIS_SYSTEM_PROMPT
+    )
+
+    assert call["response_model"] is (
+        SynthesisResponse
+    )
+
+    assert "What happened?" in call["user_prompt"]
+
+    assert "[E1]" in call["user_prompt"]
+
+    assert (
+        "Grounded source statement."
+        in call["user_prompt"]
+    )
+
+    assert (
+        "ev_internal_secret"
+        not in call["user_prompt"]
+    )
+
+
+def test_synthesizer_resolves_multiple_handles_to_real_evidence_ids():
+    claim_text = (
+        "The two sources report related findings."
+    )
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=claim_text,
+            claims=[
+                {
+                    "claim_text": claim_text,
+                    "evidence_handles": [
+                        "E1",
+                        "E2",
+                    ],
+                }
+            ],
+        )
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+        citation_id_factory=lambda: "cit_one",
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What do the sources report?",
+        evidence=[
+            _evidence(
+                id="ev_alpha",
+                excerpt="First grounded fact.",
+            ),
+            _evidence(
+                id="ev_beta",
+                excerpt="Second grounded fact.",
+            ),
+        ],
+    )
+
+    assert result.citations[0].evidence_ids == [
+        "ev_alpha",
+        "ev_beta",
+    ]
+
+
+def test_evidence_handle_order_is_preserved_in_citation():
+    claim_text = "Combined finding."
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=claim_text,
+            claims=[
+                {
+                    "claim_text": claim_text,
+                    "evidence_handles": [
+                        "E2",
+                        "E1",
+                    ],
+                }
+            ],
+        )
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+        citation_id_factory=lambda: "cit_one",
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[
+            _evidence(
+                id="ev_first",
+                excerpt="First fact.",
+            ),
+            _evidence(
+                id="ev_second",
+                excerpt="Second fact.",
+            ),
+        ],
+    )
+
+    assert result.citations[0].evidence_ids == [
+        "ev_second",
+        "ev_first",
+    ]
+
+
+def test_multiple_claims_create_multiple_citations():
+    first_claim = "The first outcome improved."
+    second_claim = "The second outcome also improved."
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=(
+                f"{first_claim} "
+                f"{second_claim}"
+            ),
+            claims=[
+                {
+                    "claim_text": first_claim,
+                    "evidence_handles": [
+                        "E1",
+                    ],
+                },
+                {
+                    "claim_text": second_claim,
+                    "evidence_handles": [
+                        "E2",
+                    ],
+                },
+            ],
+        )
+    )
+
+    ids = iter(
+        [
+            "cit_one",
+            "cit_two",
+        ]
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+        citation_id_factory=lambda: next(ids),
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What were the outcomes?",
+        evidence=[
+            _evidence(
+                id="ev_one",
+                excerpt="First evidence.",
+            ),
+            _evidence(
+                id="ev_two",
+                excerpt="Second evidence.",
+            ),
+        ],
+    )
+
+    assert [
+        citation.id
+        for citation in result.citations
+    ] == [
+        "cit_one",
+        "cit_two",
+    ]
+
+    assert [
+        citation.evidence_ids
+        for citation in result.citations
+    ] == [
+        [
+            "ev_one",
+        ],
+        [
+            "ev_two",
+        ],
+    ]
+
+
+def test_response_with_no_claims_returns_no_citations():
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=(
+                "The supplied evidence does not establish "
+                "a sufficiently supported conclusion."
+            ),
+            claims=[],
+        )
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[
+            _evidence(
+                excerpt="Some limited evidence.",
+            )
+        ],
+    )
+
+    assert result.citations == []
+
+
+# ---------------------------------------------------------------------------
+# Zero-evidence behavior
+# ---------------------------------------------------------------------------
+
+
+def test_zero_evidence_returns_deterministic_insufficient_answer():
+    llm = FakeSynthesisLLM(
+        response=None,
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[],
+    )
+
+    assert result.content == (
+        "The available evidence is insufficient "
+        "to answer the research question."
+    )
+
+    assert result.citations == []
+
+
+def test_zero_evidence_skips_llm_call():
+    llm = FakeSynthesisLLM(
+        response=None,
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[],
+    )
+
+    assert llm.calls == []
+
+
+def test_zero_evidence_skips_citation_id_generation():
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            response=None,
+        ),
+        citation_id_factory=citation_id_factory,
+    )
+
+    synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[],
+    )
+
+    assert id_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Original-question validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        123,
+        [],
+        {},
+    ],
+)
+def test_synthesizer_requires_question_string(value):
+    llm = FakeSynthesisLLM(
+        response=None,
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    with pytest.raises(TypeError):
+        synthesizer.synthesize(
+            original_question=value,
+            evidence=[],
+        )
+
+    assert llm.calls == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "   ",
+        "\n",
+        "\t",
+    ],
+)
+def test_synthesizer_rejects_blank_question(value):
+    llm = FakeSynthesisLLM(
+        response=None,
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    with pytest.raises(ValueError):
+        synthesizer.synthesize(
+            original_question=value,
+            evidence=[],
+        )
+
+    assert llm.calls == []
+
+
+def test_question_outer_whitespace_is_removed_before_prompt():
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content="Grounded answer.",
+            claims=[],
+        )
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    synthesizer.synthesize(
+        original_question="   What happened?   ",
+        evidence=[
+            _evidence(),
+        ],
+    )
+
+    prompt = llm.calls[0]["user_prompt"]
+
+    assert "What happened?" in prompt
+
+    assert (
+        "   What happened?   "
+        not in prompt
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM response validation
+# ---------------------------------------------------------------------------
+
+
+def test_unexpected_llm_response_type_is_rejected():
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            "not a SynthesisResponse"
+        ),
+    )
+
+    with pytest.raises(LLMResponseError):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_unknown_evidence_handle_is_rejected():
+    claim_text = "Grounded answer."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E99",
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    id="ev_one",
+                ),
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "handle",
+    [
+        "",
+        " ",
+        "E0",
+        "e1",
+        "E01",
+        "E999",
+        "ev_one",
+        "src_one",
+    ],
+)
+def test_invalid_or_unknown_handle_values_are_rejected(
+    handle,
+):
+    claim_text = "Grounded answer."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            handle,
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    id="ev_one",
+                ),
+            ],
+        )
+
+
+def test_duplicate_handle_inside_claim_is_rejected():
+    claim_text = "Grounded answer."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_claim_not_present_in_content_is_rejected():
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=(
+                    "The intervention improved the outcome."
+                ),
+                claims=[
+                    {
+                        "claim_text": (
+                            "The intervention improved the outcome "
+                            "by 50%."
+                        ),
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_claim_case_change_is_not_treated_as_verbatim():
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content="The Study Reported Positive Results.",
+                claims=[
+                    {
+                        "claim_text": (
+                            "the study reported positive results."
+                        ),
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_exact_claim_substring_in_content_is_allowed():
+    claim_text = (
+        "The intervention reduced processing time."
+    )
+
+    content = (
+        "The available evidence reports the following result. "
+        f"{claim_text} "
+        "Further investigation may still be useful."
+    )
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=content,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=lambda: "cit_one",
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+    )
+
+    assert result.citations[0].claim_text == (
+        claim_text
+    )
+
+
+def test_duplicate_claims_are_rejected():
+    claim_text = "The intervention improved outcomes."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    },
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    },
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_validation_failure_happens_before_citation_id_generation():
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content="Actual answer.",
+                claims=[
+                    {
+                        "claim_text": "Different claim.",
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=citation_id_factory,
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+    assert id_calls == []
+
+
+def test_unknown_handle_failure_happens_before_id_generation():
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    claim_text = "Grounded answer."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E999",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=citation_id_factory,
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+    assert id_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Trusted Citation ID generation
+# ---------------------------------------------------------------------------
+
+
+def test_citation_id_is_generated_by_python_factory():
+    claim_text = "Grounded claim."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=lambda: (
+            "cit_trusted_python_id"
+        ),
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+    )
+
+    assert result.citations[0].id == (
+        "cit_trusted_python_id"
+    )
+
+
+def test_citation_id_factory_result_is_stripped():
+    claim_text = "Grounded claim."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=lambda: (
+            "   cit_one   "
+        ),
+    )
+
+    result = synthesizer.synthesize(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+    )
+
+    assert result.citations[0].id == "cit_one"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        123,
+        {},
+        [],
+    ],
+)
+def test_citation_id_factory_must_return_string(value):
+    claim_text = "Grounded claim."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=lambda: value,
+    )
+
+    with pytest.raises(RuntimeError):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_blank_citation_id_is_rejected():
+    claim_text = "Grounded claim."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=lambda: "   ",
+    )
+
+    with pytest.raises(RuntimeError):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(),
+            ],
+        )
+
+
+def test_duplicate_citation_ids_are_rejected_before_objects_are_built():
+    first_claim = "First grounded claim."
+    second_claim = "Second grounded claim."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=(
+                    f"{first_claim} "
+                    f"{second_claim}"
+                ),
+                claims=[
+                    {
+                        "claim_text": first_claim,
+                        "evidence_handles": [
+                            "E1",
+                        ],
+                    },
+                    {
+                        "claim_text": second_claim,
+                        "evidence_handles": [
+                            "E2",
+                        ],
+                    },
+                ],
+            )
+        ),
+        citation_id_factory=lambda: "cit_same",
+    )
+
+    with pytest.raises(RuntimeError):
+        synthesizer.synthesize(
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    id="ev_one",
+                    excerpt="First evidence.",
+                ),
+                _evidence(
+                    id="ev_two",
+                    excerpt="Second evidence.",
+                ),
+            ],
+        )        
