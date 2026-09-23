@@ -1070,3 +1070,27 @@ iterations within one invocation remain supported. This guard applies to the
 production graph entry point, not direct calls to individual orchestration nodes.
 It does not add retries, checkpoint resumability, or guarantees about the thread
 safety of provider clients manually shared between otherwise separate contexts.
+
+
+## Local web interface
+
+Install the project dependencies, then run from the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1 --server.port 8502 --browser.gatherUsageStats false
+```
+
+Open http://localhost:8502. Enter a question and select **Start research**.
+The page shows research progress, the completed report, source links and
+supporting excerpts, plus TXT and JSON downloads. Reports and questions are
+session-only; download them before closing or refreshing the browser.
+
+The interface loads the project's `.env` file and uses the existing Gemini and
+Tavily configuration and research budgets. Every submitted request gets fresh
+dependencies and a fresh workspace. Viewing/downloading results does not rerun
+research. A failed request leaves the previous completed report available,
+clearly labeled with its own question. Provider error details and credentials
+are not displayed. Unverified fallback reports are labeled without claiming
+they contain a verified answer. The interface is local and has no authentication;
+it is not configured for public hosting.
