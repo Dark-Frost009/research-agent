@@ -105,6 +105,18 @@ def _validate_iteration_authorization(
         )
 
 
+def reserve_initial_iteration(
+    state: ResearchState,
+    runtime: Runtime[ResearchGraphContext],
+) -> dict[str, int]:
+    """Claim a fresh workspace before any clearing, reservation, or I/O."""
+    context = runtime.context
+    if not isinstance(context, ResearchGraphContext):
+        raise TypeError("runtime.context must be a ResearchGraphContext object.")
+    context.workspace.claim_run()
+    return reserve_iteration(state, runtime)
+
+
 def reserve_iteration(
     state: ResearchState,
     runtime: Runtime[ResearchGraphContext],

@@ -1130,3 +1130,117 @@ def test_production_graph_finalization_operational_errors_propagate(failed_stage
     assert all(state["citations"] == [] for state in states)
     assert "REJECTED DRAFT" not in repr(states)
     assert context.workspace.finalization_call is None
+
+
+
+def _isolated_context(planner=None):
+    return _context(
+        planner=planner if planner is not None else GraphPlanner(
+            planned=[_initial_sub_question()]),
+        search_node=GraphSearchNode(), source_fetcher=GraphSourceFetcher(),
+        evidence_extractor=GraphEvidenceExtractor(),
+        critic=GraphCritic(outcomes=[CritiqueResult(
+            sufficient=True, gaps=[], follow_up_questions=[])]),
+        synthesizer=GraphSynthesizer(),
+    )
+
+
+@pytest.mark.parametrize("shared_context", [False, True])
+def test_production_graph_rejects_completed_workspace_reuse(shared_context):
+    graph = build_research_graph()
+    first = _isolated_context()
+    result = graph.invoke(_initial_state(), context=first)
+    assert isinstance(result["final_report"], ResearchReport)
+    second = first if shared_context else replace(
+        _isolated_context(), workspace=first.workspace)
+    marker = first.workspace.search_results_for_iteration
+    with pytest.raises(RuntimeError, match="workspace has already been used"):
+        graph.invoke(_initial_state(), context=second)
+    assert first.workspace.search_results_for_iteration is marker
+    assert first.planner.provider_calls == 1
+    if not shared_context:
+        assert second.planner.provider_calls == 0
+
+
+def test_production_graph_failed_workspace_cannot_be_reset_for_reuse():
+    class FailingPlanner(GraphPlanner):
+        def plan(self, call):
+            super().plan(call)
+            raise LLMProviderError("test failure")
+
+    context = _isolated_context(FailingPlanner(planned=[_initial_sub_question()]))
+    graph = build_research_graph()
+    with pytest.raises(LLMProviderError, match="test failure"):
+        graph.invoke(_initial_state(), context=context)
+    context.workspace.clear_all()
+    with pytest.raises(RuntimeError, match="workspace has already been used"):
+        graph.invoke(_initial_state(), context=context)
+    assert context.planner.provider_calls == 1
+
+
+def test_production_graph_rejects_overlapping_workspace_reuse():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    entered, release = Event(), Event()
+
+    class BlockingPlanner(GraphPlanner):
+        def plan(self, call):
+            result = super().plan(call)
+            entered.set()
+            assert release.wait(10), "Test did not release first run"
+            return result
+
+    context = _isolated_context(BlockingPlanner(planned=[_initial_sub_question()]))
+    graph = build_research_graph()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(graph.invoke, _initial_state(), context=context)
+        try:
+            assert entered.wait(10), "First run did not reach planner"
+            permit = context.workspace.iteration_authorization
+            with pytest.raises(RuntimeError, match="workspace has already been used"):
+                graph.invoke(_initial_state(), context=context)
+            assert context.workspace.iteration_authorization is permit
+        finally:
+            release.set()
+        result = first.result(timeout=10)
+    assert isinstance(result["final_report"], ResearchReport)
+    assert context.planner.provider_calls == 1
+    assert result["llm_calls_used"] == 5
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+def test_production_graph_fresh_workspaces_keep_runs_isolated(overlap):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    barrier = Barrier(2) if overlap else None
+
+    class IndependentPlanner(GraphPlanner):
+        def plan(self, call):
+            if barrier is not None:
+                barrier.wait(timeout=10)
+            return super().plan(call)
+
+    contexts = [_isolated_context(IndependentPlanner(planned=[SubQuestion(
+        id=f"sq-{name}", question=f"Evidence for {name}?", created_at_iteration=0
+    )])) for name in ("alpha", "beta")]
+    graph = build_research_graph()
+    states = [dict(_initial_state(), original_question=f"Research {name}")
+              for name in ("alpha", "beta")]
+    if overlap:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(graph.invoke, state, context=context)
+                       for state, context in zip(states, contexts)]
+            results = [future.result(timeout=15) for future in futures]
+    else:
+        results = [graph.invoke(state, context=context)
+                   for state, context in zip(states, contexts)]
+    assert contexts[0].workspace is not contexts[1].workspace
+    for name, result, context in zip(("alpha", "beta"), results, contexts):
+        assert result["final_report"].question == f"Research {name}"
+        assert [q.id for q in result["sub_questions"]] == [f"sq-{name}"]
+        assert {e.sub_question_id for e in result["evidence"]} == {f"sq-{name}"}
+        assert result["llm_calls_used"] == 5
+        assert result["search_queries_used"] == result["source_fetches_used"] == 1
+        assert context.planner.provider_calls == 1

@@ -28,7 +28,9 @@ whole-run usage accounting.
 
 from __future__ import annotations
 
+from _thread import LockType
 from dataclasses import dataclass, field
+from threading import Lock
 
 from research_agent.graph.budget import (
     BudgetAuthorization,
@@ -86,6 +88,26 @@ class TransientWorkspace:
     workspace across concurrent research runs would mix transient data between
     runs and is therefore invalid usage.
     """
+
+    _run_lock: LockType = field(
+        default_factory=Lock, init=False, repr=False, compare=False
+    )
+    _run_started: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def claim_run(self) -> None:
+        """Atomically bind this workspace to one production invocation.
+
+        The claim is permanent, including after failure or clear_all(). A new
+        request must build a fresh context; clearing data cannot make an old
+        authorization safe to reuse. The lock protects simultaneous entrants.
+        """
+        with self._run_lock:
+            if self._run_started:
+                raise RuntimeError(
+                    "Research workspace has already been used. "
+                    "Build a fresh research context for each invocation."
+                )
+            self._run_started = True
 
     # ------------------------------------------------------------------
     # Iteration authorization

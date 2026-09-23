@@ -60,6 +60,7 @@ from research_agent.graph.nodes.follow_up_orchestration import (
     adapt_critique_follow_ups,
 )
 from research_agent.graph.nodes.iteration import (
+    reserve_initial_iteration,
     reserve_iteration,
 )
 from research_agent.graph.nodes.planner_orchestration import (
@@ -91,11 +92,10 @@ from research_agent.graph.state import (
 def build_research_graph():
     """Build and compile the production Research Agent graph.
 
-    Two graph nodes intentionally reference the same ``reserve_iteration``
-    function:
-
-    - ``reserve_initial_iteration`` starts the first Planner-driven pass.
-    - ``reserve_follow_up_iteration`` starts critique-driven passes.
+    The initial entry atomically claims a single-use workspace before
+    reserving the first Planner-driven iteration. Follow-up iterations reuse
+    that invocation's workspace without claiming it again. Reusing a context
+    (or sharing its workspace) across production invocations fails before I/O.
 
     Follow-up iterations do not invoke Planner again. The Critic already
     produced concrete follow-up questions, which are converted into
@@ -113,7 +113,7 @@ def build_research_graph():
 
     builder.add_node(
         "reserve_initial_iteration",
-        reserve_iteration,
+        reserve_initial_iteration,
     )
 
     builder.add_node(

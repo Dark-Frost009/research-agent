@@ -1053,3 +1053,20 @@ Persistent Checkpointing    Not yet implemented
 # License
 
 No license has been selected yet.
+
+## Workspace isolation
+
+Each production graph invocation requires a fresh `ResearchGraphContext` and
+`TransientWorkspace`. Call `build_research_context(settings)` for each request,
+or `build_research_application(settings)` to build the graph and context together.
+The CLI already creates a fresh application for every `run_research()` call.
+
+The compiled graph can be reused with fresh contexts. Its initial node atomically
+claims the workspace before clearing temporary data, reserving budget, or calling
+providers. Sequential or concurrent reuse of the same workspace raises an error.
+The claim remains consumed after completion, failure, or `clear_all()`; start a new
+request with fresh dependencies rather than resetting a used workspace. Follow-up
+iterations within one invocation remain supported. This guard applies to the
+production graph entry point, not direct calls to individual orchestration nodes.
+It does not add retries, checkpoint resumability, or guarantees about the thread
+safety of provider clients manually shared between otherwise separate contexts.
