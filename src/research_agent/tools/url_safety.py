@@ -4,12 +4,14 @@ This module provides a deterministic security boundary before a URL is
 eligible for fetching.
 
 It rejects:
+
 - unsupported URL schemes
 - URLs without a hostname
 - URLs containing embedded credentials
 - localhost-style hostnames
 - direct private, loopback, link-local, multicast, reserved, or
   unspecified IP addresses
+- unsafe IPv4 destinations embedded inside the NAT64 well-known prefix
 - hostnames that resolve to any non-public IP address
 
 This module does not perform HTTP requests.
@@ -44,6 +46,17 @@ _LOCAL_HOSTNAMES = {
     "localhost.localdomain",
 }
 
+# RFC 6052 well-known prefix used to represent IPv4 addresses inside IPv6.
+#
+# Example:
+#     64:ff9b::169.254.169.254
+#
+# Python may classify the outer IPv6 address as globally routable even though
+# the embedded IPv4 destination is link-local or otherwise non-public.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network(
+    "64:ff9b::/96"
+)
+
 
 def _default_resolver(hostname: str) -> list[str]:
     """Resolve a hostname into IP-address strings."""
@@ -72,16 +85,52 @@ def _default_resolver(hostname: str) -> list[str]:
     return sorted(addresses)
 
 
+def _embedded_nat64_ipv4(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | None:
+    """Return the IPv4 destination embedded in NAT64 well-known prefix."""
+
+    if not isinstance(
+        address,
+        ipaddress.IPv6Address,
+    ):
+        return None
+
+    if address not in _NAT64_WELL_KNOWN_PREFIX:
+        return None
+
+    # For the /96 NAT64 well-known prefix, the final 32 bits contain the
+    # translated IPv4 destination.
+    return ipaddress.IPv4Address(
+        int(address) & 0xFFFFFFFF
+    )
+
+
 def _is_public_ip(value: str) -> bool:
     """Return True only for ordinary publicly routable IP addresses."""
     try:
-        address = ipaddress.ip_address(value)
+        address = ipaddress.ip_address(
+            value
+        )
     except ValueError as exc:
         raise InvalidURLError(
             f"Resolver returned an invalid IP address: {value}"
         ) from exc
 
-    return address.is_global and not address.is_multicast
+    embedded_ipv4 = _embedded_nat64_ipv4(
+        address
+    )
+
+    if embedded_ipv4 is not None:
+        return (
+            embedded_ipv4.is_global
+            and not embedded_ipv4.is_multicast
+        )
+
+    return (
+        address.is_global
+        and not address.is_multicast
+    )
 
 
 def validate_url_for_fetch(
@@ -97,17 +146,25 @@ def validate_url_for_fetch(
     actual fetch operation.
     """
     if not isinstance(url, str):
-        raise InvalidURLError("URL must be a string.")
+        raise InvalidURLError(
+            "URL must be a string."
+        )
 
     clean_url = url.strip()
 
     if not clean_url:
-        raise InvalidURLError("URL must not be blank.")
+        raise InvalidURLError(
+            "URL must not be blank."
+        )
 
     try:
-        parsed = urlsplit(clean_url)
+        parsed = urlsplit(
+            clean_url
+        )
     except ValueError as exc:
-        raise InvalidURLError("URL could not be parsed.") from exc
+        raise InvalidURLError(
+            "URL could not be parsed."
+        ) from exc
 
     scheme = parsed.scheme.lower()
 
@@ -116,7 +173,10 @@ def validate_url_for_fetch(
             "Only HTTP and HTTPS URLs are allowed."
         )
 
-    if parsed.username is not None or parsed.password is not None:
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+    ):
         raise InvalidURLError(
             "URLs containing embedded credentials are not allowed."
         )
@@ -128,14 +188,19 @@ def validate_url_for_fetch(
             "URL must contain a hostname."
         )
 
-    hostname = hostname.rstrip(".").lower()
+    hostname = (
+        hostname.rstrip(".").lower()
+    )
 
     if not hostname:
         raise InvalidURLError(
             "URL must contain a hostname."
         )
 
-    if hostname in _LOCAL_HOSTNAMES or hostname.endswith(".localhost"):
+    if (
+        hostname in _LOCAL_HOSTNAMES
+        or hostname.endswith(".localhost")
+    ):
         raise UnsafeURLError(
             "Localhost destinations are not allowed."
         )
@@ -143,12 +208,16 @@ def validate_url_for_fetch(
     # If the hostname is already a literal IP address, validate it
     # directly without performing DNS resolution.
     try:
-        direct_ip = ipaddress.ip_address(hostname)
+        direct_ip = ipaddress.ip_address(
+            hostname
+        )
     except ValueError:
         direct_ip = None
 
     if direct_ip is not None:
-        if not _is_public_ip(hostname):
+        if not _is_public_ip(
+            hostname
+        ):
             raise UnsafeURLError(
                 "Non-public IP destinations are not allowed."
             )
@@ -159,7 +228,9 @@ def validate_url_for_fetch(
     #
     # A hostname that resolves to both public and private addresses is
     # rejected because accepting it could create an SSRF bypass path.
-    resolved_addresses = list(resolver(hostname))
+    resolved_addresses = list(
+        resolver(hostname)
+    )
 
     if not resolved_addresses:
         raise InvalidURLError(
@@ -167,9 +238,12 @@ def validate_url_for_fetch(
         )
 
     for address in resolved_addresses:
-        if not _is_public_ip(address):
+        if not _is_public_ip(
+            address
+        ):
             raise UnsafeURLError(
-                f"Hostname resolves to a non-public IP address: {address}"
+                "Hostname resolves to a non-public "
+                f"IP address: {address}"
             )
 
     return clean_url

@@ -227,6 +227,95 @@ def test_direct_non_public_ip_rejected(url):
 
 
 # ---------------------------------------------------------------------------
+# NAT64 well-known-prefix safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "embedded_ipv4",
+    [
+        "127.0.0.1",
+        "10.0.0.1",
+        "172.16.0.1",
+        "192.168.1.1",
+        "169.254.169.254",
+        "0.0.0.0",
+        "224.0.0.1",
+    ],
+)
+def test_direct_nat64_with_non_public_embedded_ipv4_rejected(
+    embedded_ipv4,
+):
+    url = f"http://[64:ff9b::{embedded_ipv4}]/"
+
+    with pytest.raises(UnsafeURLError):
+        validate_url_for_fetch(url)
+
+
+def test_direct_nat64_with_public_embedded_ipv4_is_allowed():
+    url = "https://[64:ff9b::8.8.8.8]/"
+
+    result = validate_url_for_fetch(url)
+
+    assert result == url
+
+
+def test_direct_nat64_public_ip_does_not_call_resolver():
+    calls = []
+
+    def resolver(hostname: str):
+        calls.append(hostname)
+
+        raise AssertionError(
+            "resolver should not have been called"
+        )
+
+    url = "https://[64:ff9b::8.8.8.8]/"
+
+    result = validate_url_for_fetch(
+        url,
+        resolver=resolver,
+    )
+
+    assert result == url
+    assert calls == []
+
+
+def test_hostname_resolving_to_unsafe_nat64_address_is_rejected():
+    with pytest.raises(UnsafeURLError):
+        validate_url_for_fetch(
+            "https://example.com",
+            resolver=_resolver(
+                "64:ff9b::169.254.169.254"
+            ),
+        )
+
+
+def test_hostname_resolving_to_public_nat64_address_is_allowed():
+    result = validate_url_for_fetch(
+        "https://example.com",
+        resolver=_resolver(
+            "64:ff9b::8.8.8.8"
+        ),
+    )
+
+    assert result == "https://example.com"
+
+
+def test_mixed_public_and_unsafe_nat64_dns_results_are_rejected():
+    resolver = _resolver(
+        "93.184.216.34",
+        "64:ff9b::169.254.169.254",
+    )
+
+    with pytest.raises(UnsafeURLError):
+        validate_url_for_fetch(
+            "https://example.com",
+            resolver=resolver,
+        )
+
+
+# ---------------------------------------------------------------------------
 # DNS resolution safety
 # ---------------------------------------------------------------------------
 

@@ -1,32 +1,61 @@
-"""Tests for the grounded synthesis prompt and structured-output contract.
+"""Tests for grounded synthesis, provenance, and citation construction.
 
-These tests do not call an LLM. They verify:
+These tests verify:
 - controlled E1/E2/... evidence handles
 - trusted Evidence ID mapping
 - exclusion of LLM-generated relevance notes from factual input
 - prompt-injection boundaries
 - strict structured synthesis output
+- exact supporting-quote provenance
+- deterministic conversion from controlled handles to trusted Citations
+
+A1.1 proves supporting-quote provenance only.
+
+It deliberately does NOT prove that a real quote semantically supports the
+claim attached to it. That semantic verification belongs to A1.2.
+
+B1 adds atomic whole-run finalization budgeting. For non-empty Evidence,
+synthesis and semantic verification are one mandatory two-call bundle. A
+partial authorization must execute neither call and must commit zero usage.
 """
+
+from dataclasses import FrozenInstanceError
 
 import pytest
 from pydantic import ValidationError
-from dataclasses import FrozenInstanceError
 
+from research_agent.graph.budget import (
+    BudgetAuthorization,
+    BudgetLimits,
+    BudgetPolicy,
+    BudgetUsage,
+)
 from research_agent.graph.nodes.synthesis import (
+    ClaimEvidenceSupport,
+    FinalizationCall,
     SynthesizedClaim,
     Synthesizer,
     SynthesisResponse,
     SynthesisResult,
     SynthesisValidationError,
+    prepare_finalization_call,
 )
 from research_agent.llm.client import LLMResponseError
-from research_agent.models.schemas import Citation
-
-from research_agent.models.schemas import Evidence
+from research_agent.models.schemas import (
+    Citation,
+    Evidence,
+)
 from research_agent.prompts.synthesis import (
     SYNTHESIS_SYSTEM_PROMPT,
+    assign_evidence_handles,
     build_evidence_catalog,
     build_synthesis_user_prompt,
+)
+
+from research_agent.graph.nodes.synthesis_verifier import (
+    ClaimSupportVerdict,
+    SynthesisVerificationError,
+    SynthesisVerificationResponse,
 )
 
 
@@ -49,6 +78,91 @@ def _evidence(
         sub_question_id=sub_question_id,
         excerpt=excerpt,
         relevance_note=relevance_note,
+    )
+
+
+def _budget_policy(
+    *,
+    max_llm_calls_per_run: int = 64,
+    finalization_llm_reserve: int = 2,
+) -> BudgetPolicy:
+    return BudgetPolicy(
+        limits=BudgetLimits(
+            max_research_iterations=2,
+            max_search_queries_per_run=8,
+            max_search_queries_per_iteration=5,
+            max_sources_per_run=12,
+            max_source_fetches_per_run=12,
+            max_llm_calls_per_run=max_llm_calls_per_run,
+            finalization_llm_reserve=finalization_llm_reserve,
+        )
+    )
+
+
+def _finalization_authorization(
+    *,
+    requested: int,
+    authorized: int,
+    purpose: str = "finalization",
+    reason: str | None = None,
+) -> BudgetAuthorization:
+    return BudgetAuthorization(
+        resource="llm_calls",
+        requested=requested,
+        authorized=authorized,
+        reason=(
+            reason
+            if reason is not None
+            else (
+                None
+                if requested == authorized
+                else "finalization capacity limited"
+            )
+        ),
+        llm_purpose=purpose,
+    )
+
+
+def _prepare_finalization(
+    *,
+    original_question: str,
+    evidence: list[Evidence],
+    usage: BudgetUsage | None = None,
+    budget_policy: BudgetPolicy | None = None,
+) -> FinalizationCall:
+    return prepare_finalization_call(
+        original_question=original_question,
+        evidence=evidence,
+        usage=(
+            usage
+            if usage is not None
+            else BudgetUsage()
+        ),
+        budget_policy=(
+            budget_policy
+            if budget_policy is not None
+            else _budget_policy()
+        ),
+    )
+
+
+def _synthesize(
+    synthesizer: Synthesizer,
+    *,
+    original_question: str,
+    evidence: list[Evidence],
+    usage: BudgetUsage | None = None,
+    budget_policy: BudgetPolicy | None = None,
+) -> SynthesisResult:
+    call = _prepare_finalization(
+        original_question=original_question,
+        evidence=evidence,
+        usage=usage,
+        budget_policy=budget_policy,
+    )
+
+    return synthesizer.synthesize(
+        call
     )
 
 
@@ -122,6 +236,121 @@ def test_system_prompt_requires_claims_to_exist_in_content():
     )
 
 
+def test_system_prompt_requires_supporting_quote_per_evidence_item():
+    assert "supporting_quote" in SYNTHESIS_SYSTEM_PROMPT
+
+    assert (
+        "copied verbatim"
+        in SYNTHESIS_SYSTEM_PROMPT
+    )
+
+
+# ---------------------------------------------------------------------------
+# Canonical evidence-handle assignment
+# ---------------------------------------------------------------------------
+
+
+def test_assign_evidence_handles_assigns_handles_in_input_order():
+    result = assign_evidence_handles(
+        [
+            _evidence(
+                id="ev_first",
+                excerpt="First grounded fact.",
+            ),
+            _evidence(
+                id="ev_second",
+                excerpt="Second grounded fact.",
+            ),
+            _evidence(
+                id="ev_third",
+                excerpt="Third grounded fact.",
+            ),
+        ]
+    )
+
+    assert list(result) == [
+        "E1",
+        "E2",
+        "E3",
+    ]
+
+    assert result["E1"].id == "ev_first"
+    assert result["E2"].id == "ev_second"
+    assert result["E3"].id == "ev_third"
+
+
+def test_assign_evidence_handles_returns_actual_evidence_objects():
+    evidence = _evidence(
+        id="ev_one",
+    )
+
+    result = assign_evidence_handles(
+        [
+            evidence,
+        ]
+    )
+
+    assert result["E1"] is evidence
+
+
+def test_assign_evidence_handles_empty_list_returns_empty_mapping():
+    assert assign_evidence_handles(
+        []
+    ) == {}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        (),
+        {},
+        "invalid",
+        123,
+    ],
+)
+def test_assign_evidence_handles_requires_list(value):
+    with pytest.raises(TypeError):
+        assign_evidence_handles(
+            value
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "not Evidence",
+        123,
+        {},
+        [],
+    ],
+)
+def test_assign_evidence_handles_requires_evidence_items(value):
+    with pytest.raises(TypeError):
+        assign_evidence_handles(
+            [
+                value,
+            ]
+        )
+
+
+def test_assign_evidence_handles_rejects_duplicate_evidence_ids():
+    with pytest.raises(ValueError):
+        assign_evidence_handles(
+            [
+                _evidence(
+                    id="ev_same",
+                    excerpt="First grounded fact.",
+                ),
+                _evidence(
+                    id="ev_same",
+                    excerpt="Second grounded fact.",
+                ),
+            ]
+        )
+
+
 # ---------------------------------------------------------------------------
 # Evidence catalog
 # ---------------------------------------------------------------------------
@@ -171,6 +400,39 @@ def test_build_evidence_catalog_assigns_handles_in_input_order():
 
     assert catalog.index("[E1]") < catalog.index("[E2]")
     assert catalog.index("[E2]") < catalog.index("[E3]")
+
+
+def test_build_evidence_catalog_public_contract_is_unchanged():
+    result = build_evidence_catalog(
+        [
+            _evidence(
+                id="ev_one",
+            )
+        ]
+    )
+
+    assert isinstance(
+        result,
+        tuple,
+    )
+
+    assert len(result) == 2
+
+    catalog, handle_map = result
+
+    assert isinstance(
+        catalog,
+        str,
+    )
+
+    assert isinstance(
+        handle_map,
+        dict,
+    )
+
+    assert handle_map == {
+        "E1": "ev_one",
+    }
 
 
 def test_catalog_contains_grounded_excerpt():
@@ -269,6 +531,7 @@ def test_catalog_with_missing_relevance_note_still_works():
     )
 
     assert "Grounded evidence." in catalog
+
     assert handle_map == {
         "E1": "ev_one",
     }
@@ -598,6 +861,80 @@ def test_evidence_catalog_prompt_value_must_not_be_blank(value):
 
 
 # ---------------------------------------------------------------------------
+# ClaimEvidenceSupport
+# ---------------------------------------------------------------------------
+
+
+def test_claim_evidence_support_accepts_valid_data():
+    support = ClaimEvidenceSupport(
+        evidence_handle="E1",
+        supporting_quote="Grounded factual passage.",
+    )
+
+    assert support.evidence_handle == "E1"
+
+    assert support.supporting_quote == (
+        "Grounded factual passage."
+    )
+
+
+def test_claim_evidence_support_strips_whitespace():
+    support = ClaimEvidenceSupport(
+        evidence_handle="   E1   ",
+        supporting_quote="   Grounded factual passage.   ",
+    )
+
+    assert support.evidence_handle == "E1"
+
+    assert support.supporting_quote == (
+        "Grounded factual passage."
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "   ",
+        "\n",
+    ],
+)
+def test_claim_evidence_support_rejects_blank_handle(value):
+    with pytest.raises(ValidationError):
+        ClaimEvidenceSupport(
+            evidence_handle=value,
+            supporting_quote="Grounded quote.",
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "   ",
+        "\n",
+    ],
+)
+def test_claim_evidence_support_rejects_blank_quote(value):
+    with pytest.raises(ValidationError):
+        ClaimEvidenceSupport(
+            evidence_handle="E1",
+            supporting_quote=value,
+        )
+
+
+def test_claim_evidence_support_rejects_extra_fields():
+    with pytest.raises(ValidationError):
+        ClaimEvidenceSupport(
+            evidence_handle="E1",
+            supporting_quote="Grounded quote.",
+            evidence_id="ev_forbidden",
+        )
+
+
+# ---------------------------------------------------------------------------
 # SynthesizedClaim
 # ---------------------------------------------------------------------------
 
@@ -607,9 +944,19 @@ def test_synthesized_claim_accepts_valid_data():
         claim_text=(
             "The intervention reduced processing time."
         ),
-        evidence_handles=[
-            "E1",
-            "E2",
+        evidence_support=[
+            {
+                "evidence_handle": "E1",
+                "supporting_quote": (
+                    "The intervention reduced processing time."
+                ),
+            },
+            {
+                "evidence_handle": "E2",
+                "supporting_quote": (
+                    "A second source reported the same outcome."
+                ),
+            },
         ],
     )
 
@@ -617,17 +964,36 @@ def test_synthesized_claim_accepts_valid_data():
         "The intervention reduced processing time."
     )
 
-    assert claim.evidence_handles == [
-        "E1",
-        "E2",
-    ]
+    assert len(
+        claim.evidence_support
+    ) == 2
+
+
+def test_synthesized_claim_builds_nested_support_from_dicts():
+    claim = SynthesizedClaim(
+        claim_text="Grounded factual claim.",
+        evidence_support=[
+            {
+                "evidence_handle": "E1",
+                "supporting_quote": "Grounded evidence.",
+            }
+        ],
+    )
+
+    assert isinstance(
+        claim.evidence_support[0],
+        ClaimEvidenceSupport,
+    )
 
 
 def test_synthesized_claim_strips_claim_whitespace():
     claim = SynthesizedClaim(
         claim_text="   Grounded factual claim.   ",
-        evidence_handles=[
-            "E1",
+        evidence_support=[
+            {
+                "evidence_handle": "E1",
+                "supporting_quote": "Grounded evidence.",
+            }
         ],
     )
 
@@ -649,17 +1015,20 @@ def test_synthesized_claim_rejects_blank_claim_text(value):
     with pytest.raises(ValidationError):
         SynthesizedClaim(
             claim_text=value,
-            evidence_handles=[
-                "E1",
+            evidence_support=[
+                {
+                    "evidence_handle": "E1",
+                    "supporting_quote": "Grounded evidence.",
+                }
             ],
         )
 
 
-def test_synthesized_claim_requires_at_least_one_handle():
+def test_synthesized_claim_requires_at_least_one_support_item():
     with pytest.raises(ValidationError):
         SynthesizedClaim(
             claim_text="Grounded claim.",
-            evidence_handles=[],
+            evidence_support=[],
         )
 
 
@@ -667,8 +1036,11 @@ def test_synthesized_claim_rejects_extra_fields():
     with pytest.raises(ValidationError):
         SynthesizedClaim(
             claim_text="Grounded claim.",
-            evidence_handles=[
-                "E1",
+            evidence_support=[
+                {
+                    "evidence_handle": "E1",
+                    "supporting_quote": "Grounded evidence.",
+                }
             ],
             source_id="src_forbidden",
         )
@@ -703,8 +1075,11 @@ def test_synthesized_claim_rejects_internal_fields(
 ):
     data = {
         "claim_text": "Grounded claim.",
-        "evidence_handles": [
-            "E1",
+        "evidence_support": [
+            {
+                "evidence_handle": "E1",
+                "supporting_quote": "Grounded evidence.",
+            }
         ],
         field_name: field_value,
     }
@@ -712,6 +1087,16 @@ def test_synthesized_claim_rejects_internal_fields(
     with pytest.raises(ValidationError):
         SynthesizedClaim(
             **data
+        )
+
+
+def test_old_flat_evidence_handles_contract_is_rejected():
+    with pytest.raises(ValidationError):
+        SynthesizedClaim(
+            claim_text="Grounded claim.",
+            evidence_handles=[
+                "E1",
+            ],
         )
 
 
@@ -730,8 +1115,13 @@ def test_synthesis_response_accepts_valid_data():
                 claim_text=(
                     "The intervention reduced processing time."
                 ),
-                evidence_handles=[
-                    "E1",
+                evidence_support=[
+                    {
+                        "evidence_handle": "E1",
+                        "supporting_quote": (
+                            "The intervention reduced processing time."
+                        ),
+                    }
                 ],
             )
         ],
@@ -752,8 +1142,11 @@ def test_synthesis_response_builds_nested_claims_from_dicts():
         claims=[
             {
                 "claim_text": "Grounded answer.",
-                "evidence_handles": [
-                    "E1",
+                "evidence_support": [
+                    {
+                        "evidence_handle": "E1",
+                        "supporting_quote": "Grounded evidence.",
+                    }
                 ],
             }
         ],
@@ -762,6 +1155,11 @@ def test_synthesis_response_builds_nested_claims_from_dicts():
     assert isinstance(
         response.claims[0],
         SynthesizedClaim,
+    )
+
+    assert isinstance(
+        response.claims[0].evidence_support[0],
+        ClaimEvidenceSupport,
     )
 
 
@@ -830,8 +1228,11 @@ def test_nested_claim_rejects_extra_fields():
             claims=[
                 {
                     "claim_text": "Grounded answer.",
-                    "evidence_handles": [
-                        "E1",
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": "Grounded evidence.",
+                        }
                     ],
                     "evidence_ids": [
                         "ev_forbidden",
@@ -841,31 +1242,43 @@ def test_nested_claim_rejects_extra_fields():
         )
 
 
-def test_nested_claim_requires_evidence_handle():
+def test_nested_claim_requires_evidence_support():
     with pytest.raises(ValidationError):
         SynthesisResponse(
             content="Grounded answer.",
             claims=[
                 {
                     "claim_text": "Grounded answer.",
-                    "evidence_handles": [],
+                    "evidence_support": [],
                 }
             ],
         )
 
+
 # ---------------------------------------------------------------------------
-# Synthesizer behavior
+# Fake LLM
 # ---------------------------------------------------------------------------
 
 
 class FakeSynthesisLLM:
-    """Fake structured-output LLM for Synthesizer tests."""
+    """Fake structured-output LLM for Synthesizer tests.
+
+    By default, existing synthesis tests receive an automatically successful
+    A1.2 verification response.
+
+    Individual A1.2 integration tests can provide an explicit
+    ``verification_response`` to simulate semantic rejection or incomplete
+    coverage.
+    """
 
     def __init__(
         self,
         response,
+        *,
+        verification_response=None,
     ):
         self.response = response
+        self.verification_response = verification_response
         self.calls = []
 
     def generate_text(
@@ -893,7 +1306,364 @@ class FakeSynthesisLLM:
             }
         )
 
-        return self.response
+        if response_model is SynthesisResponse:
+            return self.response
+
+        if response_model is SynthesisVerificationResponse:
+            if self.verification_response is not None:
+                return self.verification_response
+
+            if not isinstance(
+                self.response,
+                SynthesisResponse,
+            ):
+                raise AssertionError(
+                    "Automatic verifier response requires a "
+                    "SynthesisResponse."
+                )
+
+            return SynthesisVerificationResponse(
+                coverage_complete=True,
+                uncovered_factual_claims=[],
+                claim_verdicts=[
+                    ClaimSupportVerdict(
+                        claim_handle=f"C{index}",
+                        supported=True,
+                        reason="Accepted by synthesis test double.",
+                    )
+                    for index, _ in enumerate(
+                        self.response.claims,
+                        start=1,
+                    )
+                ],
+            )
+
+        raise AssertionError(
+            f"Unexpected structured response model: {response_model!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# B1 atomic finalization budgeting
+# ---------------------------------------------------------------------------
+
+
+def test_finalization_call_is_frozen():
+    call = FinalizationCall(
+        original_question="What happened?",
+        evidence=(),
+        authorization=_finalization_authorization(
+            requested=0,
+            authorized=0,
+        ),
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        call.original_question = "Changed"
+
+
+def test_finalization_call_requires_finalization_purpose():
+    with pytest.raises(
+        ValueError,
+        match="for finalization",
+    ):
+        FinalizationCall(
+            original_question="What happened?",
+            evidence=(
+                _evidence(),
+            ),
+            authorization=_finalization_authorization(
+                requested=2,
+                authorized=2,
+                purpose="optional_research",
+            ),
+        )
+
+
+def test_finalization_call_requires_llm_resource():
+    authorization = BudgetAuthorization(
+        resource="search_queries",
+        requested=2,
+        authorized=2,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="for llm_calls",
+    ):
+        FinalizationCall(
+            original_question="What happened?",
+            evidence=(
+                _evidence(),
+            ),
+            authorization=authorization,
+        )
+
+
+def test_nonempty_finalization_requires_two_requested_calls():
+    with pytest.raises(
+        ValueError,
+        match="does not match Evidence",
+    ):
+        FinalizationCall(
+            original_question="What happened?",
+            evidence=(
+                _evidence(),
+            ),
+            authorization=_finalization_authorization(
+                requested=1,
+                authorized=1,
+            ),
+        )
+
+
+def test_zero_evidence_finalization_requires_zero_requested_calls():
+    with pytest.raises(
+        ValueError,
+        match="does not match Evidence",
+    ):
+        FinalizationCall(
+            original_question="What happened?",
+            evidence=(),
+            authorization=_finalization_authorization(
+                requested=2,
+                authorized=2,
+            ),
+        )
+
+
+def test_prepare_finalization_requests_two_calls_for_nonempty_evidence():
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+    )
+
+    assert call.authorization.resource == "llm_calls"
+    assert call.authorization.llm_purpose == "finalization"
+    assert call.authorization.requested == 2
+    assert call.authorization.authorized == 2
+    assert call.fully_authorized is True
+    assert call.llm_calls_used == 2
+    assert call.skipped == 0
+
+
+def test_prepare_finalization_requests_zero_calls_for_empty_evidence():
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[],
+    )
+
+    assert call.authorization.resource == "llm_calls"
+    assert call.authorization.llm_purpose == "finalization"
+    assert call.authorization.requested == 0
+    assert call.authorization.authorized == 0
+    assert call.requires_llm is False
+    assert call.fully_authorized is True
+    assert call.llm_calls_used == 0
+    assert call.skipped == 0
+
+
+def test_partial_finalization_authorization_commits_zero_usage():
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=1,
+        ),
+        budget_policy=_budget_policy(
+            max_llm_calls_per_run=2,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    assert call.authorization.requested == 2
+    assert call.authorization.authorized == 1
+    assert call.fully_authorized is False
+    assert call.llm_calls_used == 0
+    assert call.skipped == 2
+
+
+def test_denied_finalization_commits_zero_usage():
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=2,
+        ),
+        budget_policy=_budget_policy(
+            max_llm_calls_per_run=2,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    assert call.authorization.requested == 2
+    assert call.authorization.authorized == 0
+    assert call.fully_authorized is False
+    assert call.llm_calls_used == 0
+    assert call.skipped == 2
+
+
+def test_partial_finalization_executes_neither_llm_call():
+    llm = FakeSynthesisLLM(
+        response=AssertionError(
+            "Provider must not be called."
+        ),
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=1,
+        ),
+        budget_policy=_budget_policy(
+            max_llm_calls_per_run=2,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    result = synthesizer.synthesize(
+        call
+    )
+
+    assert result.content == (
+        "The research answer could not be finalized "
+        "within the available LLM budget."
+    )
+    assert result.citations == []
+    assert llm.calls == []
+
+
+def test_denied_finalization_executes_neither_llm_call():
+    llm = FakeSynthesisLLM(
+        response=AssertionError(
+            "Provider must not be called."
+        ),
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=2,
+        ),
+        budget_policy=_budget_policy(
+            max_llm_calls_per_run=2,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    result = synthesizer.synthesize(
+        call
+    )
+
+    assert result.content == (
+        "The research answer could not be finalized "
+        "within the available LLM budget."
+    )
+    assert result.citations == []
+    assert llm.calls == []
+
+
+def test_synthesizer_requires_finalization_call():
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            response=None,
+        ),
+    )
+
+    with pytest.raises(
+        TypeError,
+        match="FinalizationCall",
+    ):
+        synthesizer.synthesize(
+            "not a FinalizationCall"
+        )
+
+
+def test_prepare_finalization_does_not_mutate_usage():
+    usage = BudgetUsage(
+        llm_calls_used=5,
+    )
+
+    _prepare_finalization(
+        original_question="What happened?",
+        evidence=[
+            _evidence(),
+        ],
+        usage=usage,
+    )
+
+    assert usage.llm_calls_used == 5
+
+
+def test_prepare_finalization_does_not_mutate_evidence_list():
+    evidence = [
+        _evidence(
+            id="ev_one",
+        ),
+        _evidence(
+            id="ev_two",
+            excerpt="Second grounded fact.",
+        ),
+    ]
+
+    before = list(
+        evidence
+    )
+
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=evidence,
+    )
+
+    assert evidence == before
+    assert call.evidence == tuple(
+        before
+    )
+
+
+def test_prepare_finalization_rejects_duplicate_evidence_ids_before_budgeting():
+    with pytest.raises(
+        ValueError,
+        match="Duplicate Evidence IDs",
+    ):
+        _prepare_finalization(
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    id="ev_same",
+                    excerpt="First grounded fact.",
+                ),
+                _evidence(
+                    id="ev_same",
+                    excerpt="Second grounded fact.",
+                ),
+            ],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Synthesizer behavior
+# ---------------------------------------------------------------------------
 
 
 def test_synthesis_result_is_frozen():
@@ -907,9 +1677,11 @@ def test_synthesis_result_is_frozen():
 
 
 def test_synthesizer_creates_grounded_result():
-    claim_text = (
+    excerpt = (
         "The intervention reduced processing time."
     )
+
+    claim_text = excerpt
 
     llm = FakeSynthesisLLM(
         SynthesisResponse(
@@ -917,8 +1689,11 @@ def test_synthesizer_creates_grounded_result():
             claims=[
                 {
                     "claim_text": claim_text,
-                    "evidence_handles": [
-                        "E1",
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": excerpt,
+                        }
                     ],
                 }
             ],
@@ -930,14 +1705,13 @@ def test_synthesizer_creates_grounded_result():
         citation_id_factory=lambda: "cit_one",
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What effect did the intervention have?",
         evidence=[
             _evidence(
                 id="ev_one",
-                excerpt=(
-                    "The intervention reduced processing time."
-                ),
+                excerpt=excerpt,
             )
         ],
     )
@@ -960,6 +1734,7 @@ def test_synthesizer_creates_grounded_result():
 
     assert result.citations[0].id == "cit_one"
     assert result.citations[0].claim_text == claim_text
+
     assert result.citations[0].evidence_ids == [
         "ev_one",
     ]
@@ -984,14 +1759,15 @@ def test_synthesizer_calls_llm_with_expected_contract():
         llm=llm,
     )
 
-    synthesizer.synthesize(
+    _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=evidence,
     )
 
     assert len(
         llm.calls
-    ) == 1
+    ) == 2
 
     call = llm.calls[0]
 
@@ -1004,7 +1780,6 @@ def test_synthesizer_calls_llm_with_expected_contract():
     )
 
     assert "What happened?" in call["user_prompt"]
-
     assert "[E1]" in call["user_prompt"]
 
     assert (
@@ -1017,8 +1792,28 @@ def test_synthesizer_calls_llm_with_expected_contract():
         not in call["user_prompt"]
     )
 
+    verification_call = llm.calls[1]
+
+    assert (
+        verification_call["response_model"]
+        is SynthesisVerificationResponse
+    )
+
+    assert (
+        "Grounded answer."
+        in verification_call["user_prompt"]
+    )
+
+    assert (
+        '"claims": []'
+        in verification_call["user_prompt"]
+    )
+
 
 def test_synthesizer_resolves_multiple_handles_to_real_evidence_ids():
+    first_excerpt = "First grounded fact."
+    second_excerpt = "Second grounded fact."
+
     claim_text = (
         "The two sources report related findings."
     )
@@ -1029,9 +1824,15 @@ def test_synthesizer_resolves_multiple_handles_to_real_evidence_ids():
             claims=[
                 {
                     "claim_text": claim_text,
-                    "evidence_handles": [
-                        "E1",
-                        "E2",
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": first_excerpt,
+                        },
+                        {
+                            "evidence_handle": "E2",
+                            "supporting_quote": second_excerpt,
+                        },
                     ],
                 }
             ],
@@ -1043,16 +1844,17 @@ def test_synthesizer_resolves_multiple_handles_to_real_evidence_ids():
         citation_id_factory=lambda: "cit_one",
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What do the sources report?",
         evidence=[
             _evidence(
                 id="ev_alpha",
-                excerpt="First grounded fact.",
+                excerpt=first_excerpt,
             ),
             _evidence(
                 id="ev_beta",
-                excerpt="Second grounded fact.",
+                excerpt=second_excerpt,
             ),
         ],
     )
@@ -1064,6 +1866,9 @@ def test_synthesizer_resolves_multiple_handles_to_real_evidence_ids():
 
 
 def test_evidence_handle_order_is_preserved_in_citation():
+    first_excerpt = "First fact."
+    second_excerpt = "Second fact."
+
     claim_text = "Combined finding."
 
     llm = FakeSynthesisLLM(
@@ -1072,9 +1877,15 @@ def test_evidence_handle_order_is_preserved_in_citation():
             claims=[
                 {
                     "claim_text": claim_text,
-                    "evidence_handles": [
-                        "E2",
-                        "E1",
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E2",
+                            "supporting_quote": second_excerpt,
+                        },
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": first_excerpt,
+                        },
                     ],
                 }
             ],
@@ -1086,16 +1897,17 @@ def test_evidence_handle_order_is_preserved_in_citation():
         citation_id_factory=lambda: "cit_one",
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[
             _evidence(
                 id="ev_first",
-                excerpt="First fact.",
+                excerpt=first_excerpt,
             ),
             _evidence(
                 id="ev_second",
-                excerpt="Second fact.",
+                excerpt=second_excerpt,
             ),
         ],
     )
@@ -1107,6 +1919,9 @@ def test_evidence_handle_order_is_preserved_in_citation():
 
 
 def test_multiple_claims_create_multiple_citations():
+    first_excerpt = "First evidence."
+    second_excerpt = "Second evidence."
+
     first_claim = "The first outcome improved."
     second_claim = "The second outcome also improved."
 
@@ -1119,14 +1934,20 @@ def test_multiple_claims_create_multiple_citations():
             claims=[
                 {
                     "claim_text": first_claim,
-                    "evidence_handles": [
-                        "E1",
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": first_excerpt,
+                        }
                     ],
                 },
                 {
                     "claim_text": second_claim,
-                    "evidence_handles": [
-                        "E2",
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E2",
+                            "supporting_quote": second_excerpt,
+                        }
                     ],
                 },
             ],
@@ -1145,16 +1966,17 @@ def test_multiple_claims_create_multiple_citations():
         citation_id_factory=lambda: next(ids),
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What were the outcomes?",
         evidence=[
             _evidence(
                 id="ev_one",
-                excerpt="First evidence.",
+                excerpt=first_excerpt,
             ),
             _evidence(
                 id="ev_two",
-                excerpt="Second evidence.",
+                excerpt=second_excerpt,
             ),
         ],
     )
@@ -1180,6 +2002,54 @@ def test_multiple_claims_create_multiple_citations():
     ]
 
 
+def test_supporting_quote_is_not_persisted_on_citation():
+    excerpt = "Grounded evidence passage."
+    claim_text = "Grounded claim."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=lambda: "cit_one",
+    )
+
+    result = _synthesize(
+        synthesizer,
+        original_question="What happened?",
+        evidence=[
+            _evidence(
+                id="ev_one",
+                excerpt=excerpt,
+            )
+        ],
+    )
+
+    citation = result.citations[0]
+
+    assert not hasattr(
+        citation,
+        "supporting_quote",
+    )
+
+    assert (
+        "supporting_quote"
+        not in citation.model_dump()
+    )
+
+
 def test_response_with_no_claims_returns_no_citations():
     llm = FakeSynthesisLLM(
         SynthesisResponse(
@@ -1195,7 +2065,8 @@ def test_response_with_no_claims_returns_no_citations():
         llm=llm,
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[
             _evidence(
@@ -1221,7 +2092,8 @@ def test_zero_evidence_returns_deterministic_insufficient_answer():
         llm=llm,
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[],
     )
@@ -1243,7 +2115,8 @@ def test_zero_evidence_skips_llm_call():
         llm=llm,
     )
 
-    synthesizer.synthesize(
+    _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[],
     )
@@ -1265,7 +2138,8 @@ def test_zero_evidence_skips_citation_id_generation():
         citation_id_factory=citation_id_factory,
     )
 
-    synthesizer.synthesize(
+    _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[],
     )
@@ -1287,7 +2161,7 @@ def test_zero_evidence_skips_citation_id_generation():
         {},
     ],
 )
-def test_synthesizer_requires_question_string(value):
+def test_prepare_finalization_requires_question_string(value):
     llm = FakeSynthesisLLM(
         response=None,
     )
@@ -1297,7 +2171,8 @@ def test_synthesizer_requires_question_string(value):
     )
 
     with pytest.raises(TypeError):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question=value,
             evidence=[],
         )
@@ -1315,7 +2190,7 @@ def test_synthesizer_requires_question_string(value):
         "\t",
     ],
 )
-def test_synthesizer_rejects_blank_question(value):
+def test_prepare_finalization_rejects_blank_question(value):
     llm = FakeSynthesisLLM(
         response=None,
     )
@@ -1325,7 +2200,8 @@ def test_synthesizer_rejects_blank_question(value):
     )
 
     with pytest.raises(ValueError):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question=value,
             evidence=[],
         )
@@ -1345,7 +2221,8 @@ def test_question_outer_whitespace_is_removed_before_prompt():
         llm=llm,
     )
 
-    synthesizer.synthesize(
+    _synthesize(
+        synthesizer,
         original_question="   What happened?   ",
         evidence=[
             _evidence(),
@@ -1363,7 +2240,7 @@ def test_question_outer_whitespace_is_removed_before_prompt():
 
 
 # ---------------------------------------------------------------------------
-# LLM response validation
+# LLM response and provenance validation
 # ---------------------------------------------------------------------------
 
 
@@ -1375,7 +2252,8 @@ def test_unexpected_llm_response_type_is_rejected():
     )
 
     with pytest.raises(LLMResponseError):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
                 _evidence(),
@@ -1384,6 +2262,7 @@ def test_unexpected_llm_response_type_is_rejected():
 
 
 def test_unknown_evidence_handle_is_rejected():
+    excerpt = "Grounded evidence."
     claim_text = "Grounded answer."
 
     synthesizer = Synthesizer(
@@ -1393,8 +2272,11 @@ def test_unknown_evidence_handle_is_rejected():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E99",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E99",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1405,11 +2287,13 @@ def test_unknown_evidence_handle_is_rejected():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
                 _evidence(
                     id="ev_one",
+                    excerpt=excerpt,
                 ),
             ],
         )
@@ -1418,8 +2302,6 @@ def test_unknown_evidence_handle_is_rejected():
 @pytest.mark.parametrize(
     "handle",
     [
-        "",
-        " ",
         "E0",
         "e1",
         "E01",
@@ -1431,6 +2313,7 @@ def test_unknown_evidence_handle_is_rejected():
 def test_invalid_or_unknown_handle_values_are_rejected(
     handle,
 ):
+    excerpt = "Grounded evidence."
     claim_text = "Grounded answer."
 
     synthesizer = Synthesizer(
@@ -1440,8 +2323,11 @@ def test_invalid_or_unknown_handle_values_are_rejected(
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            handle,
+                        "evidence_support": [
+                            {
+                                "evidence_handle": handle,
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1452,17 +2338,20 @@ def test_invalid_or_unknown_handle_values_are_rejected(
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
                 _evidence(
                     id="ev_one",
+                    excerpt=excerpt,
                 ),
             ],
         )
 
 
 def test_duplicate_handle_inside_claim_is_rejected():
+    excerpt = "Grounded evidence."
     claim_text = "Grounded answer."
 
     synthesizer = Synthesizer(
@@ -1472,9 +2361,15 @@ def test_duplicate_handle_inside_claim_is_rejected():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            },
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            },
                         ],
                     }
                 ],
@@ -1485,15 +2380,20 @@ def test_duplicate_handle_inside_claim_is_rejected():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
 
 def test_claim_not_present_in_content_is_rejected():
+    excerpt = "Grounded evidence."
+
     synthesizer = Synthesizer(
         llm=FakeSynthesisLLM(
             SynthesisResponse(
@@ -1506,8 +2406,11 @@ def test_claim_not_present_in_content_is_rejected():
                             "The intervention improved the outcome "
                             "by 50%."
                         ),
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1518,15 +2421,20 @@ def test_claim_not_present_in_content_is_rejected():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
 
 def test_claim_case_change_is_not_treated_as_verbatim():
+    excerpt = "Grounded evidence."
+
     synthesizer = Synthesizer(
         llm=FakeSynthesisLLM(
             SynthesisResponse(
@@ -1536,8 +2444,11 @@ def test_claim_case_change_is_not_treated_as_verbatim():
                         "claim_text": (
                             "the study reported positive results."
                         ),
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1548,18 +2459,23 @@ def test_claim_case_change_is_not_treated_as_verbatim():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
 
 def test_exact_claim_substring_in_content_is_allowed():
-    claim_text = (
+    excerpt = (
         "The intervention reduced processing time."
     )
+
+    claim_text = excerpt
 
     content = (
         "The available evidence reports the following result. "
@@ -1574,8 +2490,11 @@ def test_exact_claim_substring_in_content_is_allowed():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1584,10 +2503,13 @@ def test_exact_claim_substring_in_content_is_allowed():
         citation_id_factory=lambda: "cit_one",
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[
-            _evidence(),
+            _evidence(
+                excerpt=excerpt,
+            ),
         ],
     )
 
@@ -1597,6 +2519,7 @@ def test_exact_claim_substring_in_content_is_allowed():
 
 
 def test_duplicate_claims_are_rejected():
+    excerpt = "Grounded evidence."
     claim_text = "The intervention improved outcomes."
 
     synthesizer = Synthesizer(
@@ -1606,14 +2529,20 @@ def test_duplicate_claims_are_rejected():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     },
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     },
                 ],
@@ -1624,15 +2553,118 @@ def test_duplicate_claims_are_rejected():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
 
-def test_validation_failure_happens_before_citation_id_generation():
+def test_fabricated_supporting_quote_is_rejected():
+    real_excerpt = (
+        "The study enrolled 500 participants."
+    )
+
+    claim_text = (
+        "The study enrolled participants."
+    )
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": (
+                                    "The study enrolled 900 participants."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        _synthesize(
+            synthesizer,
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    excerpt=real_excerpt,
+                ),
+            ],
+        )
+
+
+def test_quote_from_different_evidence_attached_to_wrong_handle_is_rejected():
+    first_excerpt = (
+        "The first study enrolled 500 participants."
+    )
+
+    second_excerpt = (
+        "The second study reported improved outcomes."
+    )
+
+    claim_text = (
+        "The research reported findings."
+    )
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content=claim_text,
+                claims=[
+                    {
+                        "claim_text": claim_text,
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": second_excerpt,
+                            }
+                        ],
+                    }
+                ],
+            )
+        ),
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        _synthesize(
+            synthesizer,
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    id="ev_one",
+                    excerpt=first_excerpt,
+                ),
+                _evidence(
+                    id="ev_two",
+                    excerpt=second_excerpt,
+                ),
+            ],
+        )
+
+
+def test_mixed_valid_and_fabricated_quotes_reject_whole_response():
+    first_excerpt = "First grounded evidence."
+    second_excerpt = "Second grounded evidence."
+
+    claim_text = "Combined research finding."
+
     id_calls = []
 
     def citation_id_factory():
@@ -1642,12 +2674,21 @@ def test_validation_failure_happens_before_citation_id_generation():
     synthesizer = Synthesizer(
         llm=FakeSynthesisLLM(
             SynthesisResponse(
-                content="Actual answer.",
+                content=claim_text,
                 claims=[
                     {
-                        "claim_text": "Different claim.",
-                        "evidence_handles": [
-                            "E1",
+                        "claim_text": claim_text,
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": first_excerpt,
+                            },
+                            {
+                                "evidence_handle": "E2",
+                                "supporting_quote": (
+                                    "Fabricated second quote."
+                                ),
+                            },
                         ],
                     }
                 ],
@@ -1659,10 +2700,108 @@ def test_validation_failure_happens_before_citation_id_generation():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    id="ev_one",
+                    excerpt=first_excerpt,
+                ),
+                _evidence(
+                    id="ev_two",
+                    excerpt=second_excerpt,
+                ),
+            ],
+        )
+
+    assert id_calls == []
+
+
+def test_quote_validation_failure_happens_before_citation_id_generation():
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content="Grounded claim.",
+                claims=[
+                    {
+                        "claim_text": "Grounded claim.",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": (
+                                    "Fabricated quote."
+                                ),
+                            }
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=citation_id_factory,
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        _synthesize(
+            synthesizer,
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    excerpt="Actual grounded evidence.",
+                ),
+            ],
+        )
+
+    assert id_calls == []
+
+
+def test_validation_failure_happens_before_citation_id_generation():
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    excerpt = "Grounded evidence."
+
+    synthesizer = Synthesizer(
+        llm=FakeSynthesisLLM(
+            SynthesisResponse(
+                content="Actual answer.",
+                claims=[
+                    {
+                        "claim_text": "Different claim.",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
+                        ],
+                    }
+                ],
+            )
+        ),
+        citation_id_factory=citation_id_factory,
+    )
+
+    with pytest.raises(
+        SynthesisValidationError
+    ):
+        _synthesize(
+            synthesizer,
+            original_question="What happened?",
+            evidence=[
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
@@ -1685,8 +2824,11 @@ def test_unknown_handle_failure_happens_before_id_generation():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E999",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E999",
+                                "supporting_quote": "Grounded evidence.",
+                            }
                         ],
                     }
                 ],
@@ -1698,14 +2840,264 @@ def test_unknown_handle_failure_happens_before_id_generation():
     with pytest.raises(
         SynthesisValidationError
     ):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt="Grounded evidence.",
+                ),
             ],
         )
 
     assert id_calls == []
+
+
+def test_grounded_but_unrelated_quote_passes_a1_1_provenance_validation():
+    """A1.1 proves provenance, not semantic entailment."""
+
+    excerpt = (
+        "The study enrolled 500 participants."
+    )
+
+    unrelated_claim = (
+        "The treatment reduced mortality by 40%."
+    )
+
+    response = SynthesisResponse(
+        content=unrelated_claim,
+        claims=[
+            {
+                "claim_text": unrelated_claim,
+                "evidence_support": [
+                    {
+                        "evidence_handle": "E1",
+                        "supporting_quote": excerpt,
+                    }
+                ],
+            }
+        ],
+    )
+
+    evidence_lookup = assign_evidence_handles(
+        [
+            _evidence(
+                id="ev_one",
+                excerpt=excerpt,
+            )
+        ]
+    )
+
+    # A1.1 must accept this because the quote is genuinely present
+    # in the Evidence excerpt referenced by E1.
+    Synthesizer._validate_response(
+        response=response,
+        evidence_lookup=evidence_lookup,
+    )
+
+
+def test_grounded_but_unrelated_quote_is_rejected_by_a1_2_before_id_generation():
+    excerpt = (
+        "The study enrolled 500 participants."
+    )
+
+    unrelated_claim = (
+        "The treatment reduced mortality by 40%."
+    )
+
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=unrelated_claim,
+            claims=[
+                {
+                    "claim_text": unrelated_claim,
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": excerpt,
+                        }
+                    ],
+                }
+            ],
+        ),
+        verification_response=SynthesisVerificationResponse(
+            coverage_complete=True,
+            uncovered_factual_claims=[],
+            claim_verdicts=[
+                ClaimSupportVerdict(
+                    claim_handle="C1",
+                    supported=False,
+                    reason=(
+                        "The enrollment quote does not support "
+                        "the mortality-reduction claim."
+                    ),
+                )
+            ],
+        ),
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+        citation_id_factory=citation_id_factory,
+    )
+
+    with pytest.raises(
+        SynthesisVerificationError,
+        match="semantically unsupported",
+    ):
+        _synthesize(
+            synthesizer,
+            original_question=(
+                "What effect did the treatment have?"
+            ),
+            evidence=[
+                _evidence(
+                    id="ev_one",
+                    excerpt=excerpt,
+                )
+            ],
+        )
+
+    # Synthesis call + verifier call both occurred.
+    assert len(llm.calls) == 2
+
+    # Trusted Citation IDs must not exist after A1.2 rejection.
+    assert id_calls == []
+
+
+def test_stronger_factual_content_is_rejected_by_a1_2_coverage_before_id_generation():
+    excerpt = (
+        "The treatment reduced mortality."
+    )
+
+    weaker_claim = (
+        "The treatment reduced mortality"
+    )
+
+    stronger_content = (
+        "The treatment reduced mortality by 40%."
+    )
+
+    id_calls = []
+
+    def citation_id_factory():
+        id_calls.append("called")
+        return "cit_one"
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=stronger_content,
+            claims=[
+                {
+                    "claim_text": weaker_claim,
+                    "evidence_support": [
+                        {
+                            "evidence_handle": "E1",
+                            "supporting_quote": excerpt,
+                        }
+                    ],
+                }
+            ],
+        ),
+        verification_response=SynthesisVerificationResponse(
+            coverage_complete=False,
+            uncovered_factual_claims=[
+                stronger_content,
+            ],
+            claim_verdicts=[
+                ClaimSupportVerdict(
+                    claim_handle="C1",
+                    supported=True,
+                    reason=(
+                        "The quote supports the weaker declared claim, "
+                        "but not the added 40% detail in the answer."
+                    ),
+                )
+            ],
+        ),
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+        citation_id_factory=citation_id_factory,
+    )
+
+    with pytest.raises(
+        SynthesisVerificationError,
+        match="factual claim coverage is incomplete",
+    ):
+        _synthesize(
+            synthesizer,
+            original_question=(
+                "What effect did the treatment have?"
+            ),
+            evidence=[
+                _evidence(
+                    id="ev_one",
+                    excerpt=excerpt,
+                )
+            ],
+        )
+
+    assert len(llm.calls) == 2
+    assert id_calls == []
+
+
+def test_factual_content_with_zero_declared_claims_is_rejected_by_a1_2():
+    factual_content = (
+        "The treatment reduced mortality by 40%."
+    )
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content=factual_content,
+            claims=[],
+        ),
+        verification_response=SynthesisVerificationResponse(
+            coverage_complete=False,
+            uncovered_factual_claims=[
+                factual_content,
+            ],
+            claim_verdicts=[],
+        ),
+    )
+
+    synthesizer = Synthesizer(
+        llm=llm,
+    )
+
+    with pytest.raises(
+        SynthesisVerificationError,
+        match="factual claim coverage is incomplete",
+    ):
+        _synthesize(
+            synthesizer,
+            original_question=(
+                "What effect did the treatment have?"
+            ),
+            evidence=[
+                _evidence(
+                    excerpt=(
+                        "The available study contains "
+                        "treatment information."
+                    ),
+                )
+            ],
+        )
+
+    # claims=[] must NOT bypass the verifier.
+    assert len(llm.calls) == 2
+
+    assert (
+        llm.calls[1]["response_model"]
+        is SynthesisVerificationResponse
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1714,6 +3106,7 @@ def test_unknown_handle_failure_happens_before_id_generation():
 
 
 def test_citation_id_is_generated_by_python_factory():
+    excerpt = "Grounded evidence."
     claim_text = "Grounded claim."
 
     synthesizer = Synthesizer(
@@ -1723,8 +3116,11 @@ def test_citation_id_is_generated_by_python_factory():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1735,10 +3131,13 @@ def test_citation_id_is_generated_by_python_factory():
         ),
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[
-            _evidence(),
+            _evidence(
+                excerpt=excerpt,
+            ),
         ],
     )
 
@@ -1748,6 +3147,7 @@ def test_citation_id_is_generated_by_python_factory():
 
 
 def test_citation_id_factory_result_is_stripped():
+    excerpt = "Grounded evidence."
     claim_text = "Grounded claim."
 
     synthesizer = Synthesizer(
@@ -1757,8 +3157,11 @@ def test_citation_id_factory_result_is_stripped():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1769,10 +3172,13 @@ def test_citation_id_factory_result_is_stripped():
         ),
     )
 
-    result = synthesizer.synthesize(
+    result = _synthesize(
+        synthesizer,
         original_question="What happened?",
         evidence=[
-            _evidence(),
+            _evidence(
+                excerpt=excerpt,
+            ),
         ],
     )
 
@@ -1789,6 +3195,7 @@ def test_citation_id_factory_result_is_stripped():
     ],
 )
 def test_citation_id_factory_must_return_string(value):
+    excerpt = "Grounded evidence."
     claim_text = "Grounded claim."
 
     synthesizer = Synthesizer(
@@ -1798,8 +3205,11 @@ def test_citation_id_factory_must_return_string(value):
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1809,15 +3219,19 @@ def test_citation_id_factory_must_return_string(value):
     )
 
     with pytest.raises(RuntimeError):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
 
 def test_blank_citation_id_is_rejected():
+    excerpt = "Grounded evidence."
     claim_text = "Grounded claim."
 
     synthesizer = Synthesizer(
@@ -1827,8 +3241,11 @@ def test_blank_citation_id_is_rejected():
                 claims=[
                     {
                         "claim_text": claim_text,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": excerpt,
+                            }
                         ],
                     }
                 ],
@@ -1838,15 +3255,21 @@ def test_blank_citation_id_is_rejected():
     )
 
     with pytest.raises(RuntimeError):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
-                _evidence(),
+                _evidence(
+                    excerpt=excerpt,
+                ),
             ],
         )
 
 
 def test_duplicate_citation_ids_are_rejected_before_objects_are_built():
+    first_excerpt = "First evidence."
+    second_excerpt = "Second evidence."
+
     first_claim = "First grounded claim."
     second_claim = "Second grounded claim."
 
@@ -1860,14 +3283,20 @@ def test_duplicate_citation_ids_are_rejected_before_objects_are_built():
                 claims=[
                     {
                         "claim_text": first_claim,
-                        "evidence_handles": [
-                            "E1",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E1",
+                                "supporting_quote": first_excerpt,
+                            }
                         ],
                     },
                     {
                         "claim_text": second_claim,
-                        "evidence_handles": [
-                            "E2",
+                        "evidence_support": [
+                            {
+                                "evidence_handle": "E2",
+                                "supporting_quote": second_excerpt,
+                            }
                         ],
                     },
                 ],
@@ -1877,16 +3306,17 @@ def test_duplicate_citation_ids_are_rejected_before_objects_are_built():
     )
 
     with pytest.raises(RuntimeError):
-        synthesizer.synthesize(
+        _synthesize(
+            synthesizer,
             original_question="What happened?",
             evidence=[
                 _evidence(
                     id="ev_one",
-                    excerpt="First evidence.",
+                    excerpt=first_excerpt,
                 ),
                 _evidence(
                     id="ev_two",
-                    excerpt="Second evidence.",
+                    excerpt=second_excerpt,
                 ),
             ],
-        )        
+        )

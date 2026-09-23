@@ -71,17 +71,28 @@ class SearchResult(_BaseSchema):
  
 class Source(_BaseSchema):
     """Normalized metadata for a document/page referenced by the research.
- 
+
     Deliberately holds no fetched page content - extracted content is
     converted directly into bounded Evidence objects elsewhere, and raw
     pages are never kept in shared graph state.
- 
+
+    `url` is the original/discovered URL and remains stable for Source
+    identity and traceability.
+
+    `final_url` records the actual URL reached after any redirects during
+    a successful fetch. It remains None before fetching or when fetching
+    fails.
+
     fetch_status starts at "pending": a Source can exist right after
     search discovery, before the extract/fetch step has run.
     """
- 
+
     id: str = Field(min_length=1)
     url: str = Field(min_length=1)
+    final_url: Optional[str] = Field(
+        default=None,
+        min_length=1,
+    )
     title: Optional[str] = None
     domain: str = Field(min_length=1)
     content_type: Optional[str] = None

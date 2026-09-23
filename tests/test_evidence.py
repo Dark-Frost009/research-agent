@@ -1,15 +1,26 @@
-"""Tests for evidence extraction, grounding, and prompt contracts."""
+"""Tests for batch-budgeted grounded evidence extraction."""
 
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
 
+from research_agent.graph.budget import (
+    BudgetAuthorization,
+    BudgetLimits,
+    BudgetPolicy,
+    BudgetUsage,
+)
 from research_agent.graph.nodes.evidence import (
+    EvidenceBatch,
+    EvidenceCall,
     EvidenceCandidate,
     EvidenceExtractor,
     EvidenceGroundingError,
+    EvidenceRequest,
     EvidenceResponse,
+    prepare_evidence_batch,
 )
 from research_agent.graph.nodes.source_fetcher import (
     SourceFetchResult,
@@ -25,6 +36,224 @@ from research_agent.prompts.evidence import (
     build_evidence_user_prompt,
 )
 from research_agent.tools.web_extract import FetchedPage
+
+
+FIXED_TIME = datetime(
+    2026,
+    9,
+    17,
+    12,
+    0,
+    tzinfo=timezone.utc,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _policy(
+    *,
+    max_llm_calls_per_run: int = 64,
+    finalization_llm_reserve: int = 2,
+) -> BudgetPolicy:
+    return BudgetPolicy(
+        limits=BudgetLimits(
+            max_research_iterations=2,
+            max_search_queries_per_run=8,
+            max_search_queries_per_iteration=5,
+            max_sources_per_run=12,
+            max_source_fetches_per_run=12,
+            max_llm_calls_per_run=max_llm_calls_per_run,
+            finalization_llm_reserve=finalization_llm_reserve,
+        )
+    )
+
+
+def _sub_question(
+    *,
+    id: str = "sq_one",
+    question: str = "What does the study report?",
+) -> SubQuestion:
+    return SubQuestion(
+        id=id,
+        question=question,
+    )
+
+
+def _successful_fetch_result(
+    *,
+    text: str = (
+        "The study reported a 20% reduction in screening time."
+    ),
+    source_id: str = "src_one",
+    url: str = "https://example.com/article",
+) -> SourceFetchResult:
+    source = Source(
+        id=source_id,
+        url=url,
+        final_url=url,
+        title="Example article",
+        domain="example.com",
+        content_type="text/html",
+        fetch_status="success",
+        fetched_at=FIXED_TIME,
+    )
+
+    page = FetchedPage(
+        requested_url=url,
+        final_url=url,
+        content_type="text/html",
+        text=text,
+    )
+
+    return SourceFetchResult(
+        source=source,
+        page=page,
+        error=None,
+    )
+
+
+def _failed_fetch_result() -> SourceFetchResult:
+    source = Source(
+        id="src_one",
+        url="https://example.com/article",
+        title="Example article",
+        domain="example.com",
+        fetch_status="failed",
+        fetched_at=FIXED_TIME,
+    )
+
+    return SourceFetchResult(
+        source=source,
+        page=None,
+        error="PageFetchError: failed",
+    )
+
+
+def _llm_authorization(
+    *,
+    requested: int,
+    authorized: int,
+    reason: str | None = None,
+    llm_purpose: str = "optional_research",
+) -> BudgetAuthorization:
+    return BudgetAuthorization(
+        resource="llm_calls",
+        requested=requested,
+        authorized=authorized,
+        reason=reason,
+        llm_purpose=llm_purpose,
+    )
+
+
+def _evidence_request(
+    *,
+    sub_question: SubQuestion | None = None,
+    fetch_result: SourceFetchResult | None = None,
+) -> EvidenceRequest:
+    sub_question = (
+        sub_question
+        if sub_question is not None
+        else _sub_question()
+    )
+
+    fetch_result = (
+        fetch_result
+        if fetch_result is not None
+        else _successful_fetch_result()
+    )
+
+    return EvidenceRequest(
+        sub_question=sub_question,
+        fetch_result=fetch_result,
+    )
+
+
+def _evidence_call(
+    *,
+    sub_question: SubQuestion | None = None,
+    fetch_result: SourceFetchResult | None = None,
+    authorized: int | None = None,
+) -> EvidenceCall:
+    request = _evidence_request(
+        sub_question=sub_question,
+        fetch_result=fetch_result,
+    )
+
+    requested = (
+        1
+        if request.requires_llm
+        else 0
+    )
+
+    if authorized is None:
+        authorized = requested
+
+    reason = None
+
+    if (
+        requested > 0
+        and authorized == 0
+    ):
+        reason = (
+            "optional evidence LLM "
+            "budget not authorized"
+        )
+
+    return EvidenceCall(
+        request=request,
+        authorization=_llm_authorization(
+            requested=requested,
+            authorized=authorized,
+            reason=reason,
+        ),
+    )
+
+
+class FakeEvidenceLLM:
+    """Fake structured-output LLM for EvidenceExtractor tests."""
+
+    def __init__(
+        self,
+        response=None,
+        *,
+        error=None,
+    ):
+        self.response = response
+        self.error = error
+        self.calls = []
+
+    def generate_text(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        raise AssertionError(
+            "EvidenceExtractor must not call generate_text()."
+        )
+
+    def generate_structured(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_model,
+    ):
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "response_model": response_model,
+            }
+        )
+
+        if self.error is not None:
+            raise self.error
+
+        return self.response
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +326,12 @@ def test_system_prompt_allows_empty_evidence():
 
 def test_build_evidence_prompt_contains_sub_question():
     result = build_evidence_user_prompt(
-        sub_question="What limitations does the method have?",
-        webpage_text="The method has several limitations.",
+        sub_question=(
+            "What limitations does the method have?"
+        ),
+        webpage_text=(
+            "The method has several limitations."
+        ),
     )
 
     assert (
@@ -108,17 +341,16 @@ def test_build_evidence_prompt_contains_sub_question():
 
 
 def test_build_evidence_prompt_contains_webpage_text():
-    result = build_evidence_user_prompt(
-        sub_question="Research question",
-        webpage_text=(
-            "This is externally retrieved webpage content."
-        ),
+    text = (
+        "This is externally retrieved webpage content."
     )
 
-    assert (
-        "This is externally retrieved webpage content."
-        in result
+    result = build_evidence_user_prompt(
+        sub_question="Research question",
+        webpage_text=text,
     )
+
+    assert text in result
 
 
 def test_build_evidence_prompt_marks_content_as_untrusted():
@@ -139,12 +371,21 @@ def test_build_evidence_prompt_uses_explicit_content_boundaries():
         webpage_text="Example webpage.",
     )
 
-    assert "<untrusted_webpage_content>" in result
-    assert "</untrusted_webpage_content>" in result
+    assert (
+        "<untrusted_webpage_content>"
+        in result
+    )
+
+    assert (
+        "</untrusted_webpage_content>"
+        in result
+    )
 
 
 def test_build_evidence_prompt_places_page_inside_boundaries():
-    webpage_text = "Unique webpage material."
+    webpage_text = (
+        "Unique webpage material."
+    )
 
     result = build_evidence_user_prompt(
         sub_question="Research question",
@@ -174,13 +415,12 @@ def test_prompt_preserves_prompt_injection_text_as_source_material():
     )
 
     result = build_evidence_user_prompt(
-        sub_question="What does the source report?",
+        sub_question=(
+            "What does the source report?"
+        ),
         webpage_text=malicious_page,
     )
 
-    # The retrieved text is not silently removed or interpreted by Python.
-    # It remains source material that the trusted system prompt tells the
-    # LLM not to obey.
     assert malicious_page in result
 
     assert (
@@ -191,7 +431,9 @@ def test_prompt_preserves_prompt_injection_text_as_source_material():
 
 def test_sub_question_outer_whitespace_is_removed():
     result = build_evidence_user_prompt(
-        sub_question="   Research question   ",
+        sub_question=(
+            "   Research question   "
+        ),
         webpage_text="Webpage content",
     )
 
@@ -206,7 +448,9 @@ def test_sub_question_outer_whitespace_is_removed():
 def test_webpage_outer_whitespace_is_removed():
     result = build_evidence_user_prompt(
         sub_question="Research question",
-        webpage_text="   Webpage content   ",
+        webpage_text=(
+            "   Webpage content   "
+        ),
     )
 
     assert "Webpage content" in result
@@ -226,7 +470,9 @@ def test_webpage_outer_whitespace_is_removed():
         {},
     ],
 )
-def test_sub_question_must_be_string(value):
+def test_sub_question_must_be_string(
+    value,
+):
     with pytest.raises(TypeError):
         build_evidence_user_prompt(
             sub_question=value,
@@ -244,7 +490,9 @@ def test_sub_question_must_be_string(value):
         "\t",
     ],
 )
-def test_sub_question_must_not_be_blank(value):
+def test_sub_question_must_not_be_blank(
+    value,
+):
     with pytest.raises(ValueError):
         build_evidence_user_prompt(
             sub_question=value,
@@ -261,7 +509,9 @@ def test_sub_question_must_not_be_blank(value):
         {},
     ],
 )
-def test_webpage_text_must_be_string(value):
+def test_webpage_text_must_be_string(
+    value,
+):
     with pytest.raises(TypeError):
         build_evidence_user_prompt(
             sub_question="Research question",
@@ -279,7 +529,9 @@ def test_webpage_text_must_be_string(value):
         "\t",
     ],
 )
-def test_webpage_text_must_not_be_blank(value):
+def test_webpage_text_must_not_be_blank(
+    value,
+):
     with pytest.raises(ValueError):
         build_evidence_user_prompt(
             sub_question="Research question",
@@ -313,8 +565,12 @@ def test_evidence_candidate_accepts_valid_data():
 
 def test_evidence_candidate_strips_whitespace():
     result = EvidenceCandidate(
-        excerpt="   Important factual passage.   ",
-        relevance_note="   Relevant to the question.   ",
+        excerpt=(
+            "   Important factual passage.   "
+        ),
+        relevance_note=(
+            "   Relevant to the question.   "
+        ),
     )
 
     assert result.excerpt == (
@@ -335,8 +591,12 @@ def test_evidence_candidate_strips_whitespace():
         "\n",
     ],
 )
-def test_evidence_candidate_rejects_blank_excerpt(value):
-    with pytest.raises(ValidationError):
+def test_evidence_candidate_rejects_blank_excerpt(
+    value,
+):
+    with pytest.raises(
+        ValidationError
+    ):
         EvidenceCandidate(
             excerpt=value,
         )
@@ -344,10 +604,13 @@ def test_evidence_candidate_rejects_blank_excerpt(value):
 
 def test_evidence_candidate_allows_missing_relevance_note():
     result = EvidenceCandidate(
-        excerpt="Important passage."
+        excerpt="Important passage.",
     )
 
-    assert result.relevance_note is None
+    assert (
+        result.relevance_note
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -359,8 +622,12 @@ def test_evidence_candidate_allows_missing_relevance_note():
         "\n",
     ],
 )
-def test_evidence_candidate_rejects_blank_relevance_note(value):
-    with pytest.raises(ValidationError):
+def test_evidence_candidate_rejects_blank_relevance_note(
+    value,
+):
+    with pytest.raises(
+        ValidationError
+    ):
         EvidenceCandidate(
             excerpt="Important passage.",
             relevance_note=value,
@@ -401,7 +668,9 @@ def test_evidence_candidate_rejects_internal_or_unallowed_fields(
         field_name: field_value,
     }
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError
+    ):
         EvidenceCandidate(
             **data
         )
@@ -426,15 +695,21 @@ def test_evidence_response_accepts_candidates():
         ]
     )
 
-    assert len(result.evidence) == 2
+    assert len(
+        result.evidence
+    ) == 2
 
 
 def test_evidence_response_builds_nested_models_from_dicts():
     result = EvidenceResponse(
         evidence=[
             {
-                "excerpt": "Important passage.",
-                "relevance_note": "Relevant evidence.",
+                "excerpt": (
+                    "Important passage."
+                ),
+                "relevance_note": (
+                    "Relevant evidence."
+                ),
             }
         ]
     )
@@ -463,31 +738,46 @@ def test_separate_response_instances_do_not_share_default_list():
     first = EvidenceResponse()
     second = EvidenceResponse()
 
-    assert first.evidence is not second.evidence
+    assert (
+        first.evidence
+        is not second.evidence
+    )
 
 
 def test_evidence_response_rejects_extra_fields():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError
+    ):
         EvidenceResponse(
             evidence=[],
-            answer="This field is forbidden.",
+            answer=(
+                "This field is forbidden."
+            ),
         )
 
 
 def test_nested_candidate_rejects_extra_fields():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError
+    ):
         EvidenceResponse(
             evidence=[
                 {
-                    "excerpt": "Important passage.",
-                    "source_id": "src_forbidden",
+                    "excerpt": (
+                        "Important passage."
+                    ),
+                    "source_id": (
+                        "src_forbidden"
+                    ),
                 }
             ]
         )
 
 
 def test_nested_candidate_rejects_blank_excerpt():
-    with pytest.raises(ValidationError):
+    with pytest.raises(
+        ValidationError
+    ):
         EvidenceResponse(
             evidence=[
                 {
@@ -498,112 +788,887 @@ def test_nested_candidate_rejects_blank_excerpt():
 
 
 # ---------------------------------------------------------------------------
-# EvidenceExtractor behavior
+# EvidenceRequest
 # ---------------------------------------------------------------------------
 
 
-class FakeEvidenceLLM:
-    """Fake structured-output LLM for EvidenceExtractor tests."""
+def test_evidence_request_accepts_successful_fetch():
+    request = _evidence_request()
 
-    def __init__(self, response):
-        self.response = response
-        self.calls = []
+    assert isinstance(
+        request.sub_question,
+        SubQuestion,
+    )
 
-    def generate_text(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> str:
-        raise AssertionError(
-            "EvidenceExtractor must not call generate_text()."
-        )
+    assert isinstance(
+        request.fetch_result,
+        SourceFetchResult,
+    )
 
-    def generate_structured(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        response_model,
+    assert request.requires_llm is True
+
+
+def test_evidence_request_blank_page_requires_no_llm():
+    request = _evidence_request(
+        fetch_result=_successful_fetch_result(
+            text="   ",
+        ),
+    )
+
+    assert request.requires_llm is False
+
+
+def test_evidence_request_is_frozen():
+    request = _evidence_request()
+
+    with pytest.raises(
+        FrozenInstanceError
     ):
-        self.calls.append(
-            {
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-                "response_model": response_model,
-            }
+        request.sub_question = _sub_question(
+            id="sq_other",
         )
 
-        return self.response
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "not a SubQuestion",
+        123,
+        {},
+        [],
+    ],
+)
+def test_evidence_request_requires_sub_question_model(
+    value,
+):
+    with pytest.raises(TypeError):
+        EvidenceRequest(
+            sub_question=value,
+            fetch_result=(
+                _successful_fetch_result()
+            ),
+        )
 
 
-def _sub_question() -> SubQuestion:
-    return SubQuestion(
-        id="sq_one",
-        question="What does the study report?",
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "not a SourceFetchResult",
+        123,
+        {},
+        [],
+    ],
+)
+def test_evidence_request_requires_source_fetch_result(
+    value,
+):
+    with pytest.raises(TypeError):
+        EvidenceRequest(
+            sub_question=_sub_question(),
+            fetch_result=value,
+        )
+
+
+def test_evidence_request_rejects_failed_fetch():
+    with pytest.raises(ValueError):
+        EvidenceRequest(
+            sub_question=_sub_question(),
+            fetch_result=_failed_fetch_result(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# EvidenceCall
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_call_accepts_authorized_nonblank_page():
+    call = _evidence_call()
+
+    assert call.requires_llm is True
+    assert call.authorized is True
+    assert call.skipped == 0
+
+    assert (
+        call.authorization.llm_purpose
+        == "optional_research"
     )
 
 
-def _successful_fetch_result(
-    *,
-    text: str = (
-        "The study reported a 20% reduction in screening time."
-    ),
-    source_id: str = "src_one",
-) -> SourceFetchResult:
-    source = Source(
-        id=source_id,
-        url="https://example.com/article",
-        title="Example article",
-        domain="example.com",
-        content_type="text/html",
-        fetch_status="success",
-        fetched_at=datetime(
-            2026,
-            9,
-            17,
-            12,
-            0,
-            tzinfo=timezone.utc,
+def test_evidence_call_accepts_blocked_nonblank_page():
+    call = _evidence_call(
+        authorized=0,
+    )
+
+    assert call.requires_llm is True
+    assert call.authorized is False
+    assert call.skipped == 1
+
+
+def test_evidence_call_blank_page_requires_zero_llm_calls():
+    call = _evidence_call(
+        fetch_result=(
+            _successful_fetch_result(
+                text="   ",
+            )
+        ),
+        authorized=0,
+    )
+
+    assert call.requires_llm is False
+    assert call.authorized is False
+
+    assert (
+        call.authorization.requested
+        == 0
+    )
+
+    assert (
+        call.authorization.authorized
+        == 0
+    )
+
+
+def test_evidence_call_exposes_request_data():
+    sub_question = _sub_question(
+        id="sq_trusted",
+    )
+
+    fetch_result = (
+        _successful_fetch_result(
+            source_id="src_trusted",
+        )
+    )
+
+    call = _evidence_call(
+        sub_question=sub_question,
+        fetch_result=fetch_result,
+    )
+
+    assert (
+        call.sub_question
+        is sub_question
+    )
+
+    assert (
+        call.fetch_result
+        is fetch_result
+    )
+
+
+def test_evidence_call_is_frozen():
+    call = _evidence_call()
+
+    with pytest.raises(
+        FrozenInstanceError
+    ):
+        call.request = _evidence_request(
+            sub_question=(
+                _sub_question(
+                    id="sq_other",
+                )
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "request",
+        123,
+        {},
+        [],
+    ],
+)
+def test_evidence_call_requires_evidence_request(
+    value,
+):
+    with pytest.raises(TypeError):
+        EvidenceCall(
+            request=value,
+            authorization=_llm_authorization(
+                requested=1,
+                authorized=1,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "authorization",
+        123,
+        {},
+        [],
+    ],
+)
+def test_evidence_call_requires_budget_authorization(
+    value,
+):
+    with pytest.raises(TypeError):
+        EvidenceCall(
+            request=_evidence_request(),
+            authorization=value,
+        )
+
+
+def test_evidence_call_requires_llm_calls_resource():
+    with pytest.raises(
+        ValueError,
+        match="llm_calls",
+    ):
+        EvidenceCall(
+            request=_evidence_request(),
+            authorization=BudgetAuthorization(
+                resource="search_queries",
+                requested=1,
+                authorized=1,
+            ),
+        )
+
+
+def test_evidence_call_requires_optional_research_authorization():
+    with pytest.raises(
+        ValueError,
+        match="optional_research",
+    ):
+        EvidenceCall(
+            request=_evidence_request(),
+            authorization=_llm_authorization(
+                requested=1,
+                authorized=1,
+                llm_purpose="finalization",
+            ),
+        )
+
+
+def test_nonblank_page_must_request_one_llm_call():
+    with pytest.raises(
+        ValueError,
+        match="requested LLM count",
+    ):
+        EvidenceCall(
+            request=_evidence_request(),
+            authorization=_llm_authorization(
+                requested=0,
+                authorized=0,
+            ),
+        )
+
+
+def test_blank_page_must_request_zero_llm_calls():
+    request = _evidence_request(
+        fetch_result=(
+            _successful_fetch_result(
+                text="   ",
+            )
         ),
     )
 
-    page = FetchedPage(
-        requested_url="https://example.com/article",
-        final_url="https://example.com/article",
-        content_type="text/html",
-        text=text,
+    with pytest.raises(
+        ValueError,
+        match="requested LLM count",
+    ):
+        EvidenceCall(
+            request=request,
+            authorization=_llm_authorization(
+                requested=1,
+                authorized=0,
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Evidence-batch authorization
+# ---------------------------------------------------------------------------
+
+
+def test_prepare_evidence_batch_authorizes_nonblank_page():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(),
+        budget_policy=_policy(),
     )
 
-    return SourceFetchResult(
-        source=source,
-        page=page,
-        error=None,
+    assert isinstance(
+        batch,
+        EvidenceBatch,
+    )
+
+    assert batch.requested == 1
+    assert batch.authorized == 1
+    assert batch.llm_calls_used == 1
+    assert batch.skipped == 0
+
+    assert len(batch.calls) == 1
+    assert batch.calls[0].authorized is True
+
+    assert (
+        batch.authorization.llm_purpose
+        == "optional_research"
     )
 
 
-def _failed_fetch_result() -> SourceFetchResult:
-    source = Source(
-        id="src_one",
-        url="https://example.com/article",
-        title="Example article",
-        domain="example.com",
-        fetch_status="failed",
-        fetched_at=datetime(
-            2026,
-            9,
-            17,
-            12,
-            0,
-            tzinfo=timezone.utc,
+def test_prepare_evidence_batch_blank_page_requests_zero():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text="   ",
+                    )
+                ),
+            ),
+        ],
+        usage=BudgetUsage(),
+        budget_policy=_policy(),
+    )
+
+    assert batch.requested == 0
+    assert batch.authorized == 0
+    assert batch.llm_calls_used == 0
+    assert batch.skipped == 0
+
+    assert len(batch.calls) == 1
+
+    call = batch.calls[0]
+
+    assert call.requires_llm is False
+    assert call.authorized is False
+
+    assert (
+        call.authorization.requested
+        == 0
+    )
+
+    assert (
+        call.authorization.authorized
+        == 0
+    )
+
+
+def test_prepare_evidence_batch_empty_list_requests_zero():
+    batch = prepare_evidence_batch(
+        requests=[],
+        usage=BudgetUsage(),
+        budget_policy=_policy(),
+    )
+
+    assert batch.calls == ()
+    assert batch.requested == 0
+    assert batch.authorized == 0
+    assert batch.llm_calls_used == 0
+    assert batch.skipped == 0
+
+
+def test_prepare_evidence_batch_protects_finalization_reserve():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=62,
+        ),
+        budget_policy=_policy(
+            max_llm_calls_per_run=64,
+            finalization_llm_reserve=2,
         ),
     )
 
-    return SourceFetchResult(
-        source=source,
-        page=None,
-        error="PageFetchError: failed",
+    assert batch.requested == 1
+    assert batch.authorized == 0
+    assert batch.llm_calls_used == 0
+
+    assert (
+        batch.calls[0].authorized
+        is False
     )
+
+
+def test_prepare_evidence_batch_uses_last_optional_slot_above_reserve():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=61,
+        ),
+        budget_policy=_policy(
+            max_llm_calls_per_run=64,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    assert batch.authorized == 1
+    assert batch.llm_calls_used == 1
+
+    assert (
+        batch.calls[0].authorized
+        is True
+    )
+
+
+def test_prepare_evidence_batch_blocks_when_llm_budget_exhausted():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=64,
+        ),
+        budget_policy=_policy(
+            max_llm_calls_per_run=64,
+        ),
+    )
+
+    assert batch.authorized == 0
+    assert batch.llm_calls_used == 0
+
+    assert (
+        batch.calls[0].authorized
+        is False
+    )
+
+
+def test_prepare_evidence_batch_authorizes_deterministic_nonblank_prefix():
+    requests = [
+        _evidence_request(
+            sub_question=_sub_question(
+                id="sq_one",
+            ),
+            fetch_result=(
+                _successful_fetch_result(
+                    source_id="src_one",
+                    url="https://example.com/one",
+                )
+            ),
+        ),
+        _evidence_request(
+            sub_question=_sub_question(
+                id="sq_two",
+            ),
+            fetch_result=(
+                _successful_fetch_result(
+                    source_id="src_two",
+                    url="https://example.com/two",
+                )
+            ),
+        ),
+        _evidence_request(
+            sub_question=_sub_question(
+                id="sq_three",
+            ),
+            fetch_result=(
+                _successful_fetch_result(
+                    source_id="src_three",
+                    url="https://example.com/three",
+                )
+            ),
+        ),
+    ]
+
+    batch = prepare_evidence_batch(
+        requests=requests,
+        usage=BudgetUsage(
+            llm_calls_used=60,
+        ),
+        budget_policy=_policy(
+            max_llm_calls_per_run=64,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    # remaining = 4
+    # finalization reserve = 2
+    # optional capacity = 2
+    assert batch.requested == 3
+    assert batch.authorized == 2
+    assert batch.skipped == 1
+    assert batch.llm_calls_used == 2
+
+    assert [
+        call.authorized
+        for call in batch.calls
+    ] == [
+        True,
+        True,
+        False,
+    ]
+
+
+def test_blank_request_does_not_consume_authorized_prefix_slot():
+    requests = [
+        _evidence_request(
+            sub_question=_sub_question(
+                id="sq_one",
+            ),
+            fetch_result=(
+                _successful_fetch_result(
+                    source_id="src_one",
+                    url="https://example.com/one",
+                )
+            ),
+        ),
+        _evidence_request(
+            sub_question=_sub_question(
+                id="sq_blank",
+            ),
+            fetch_result=(
+                _successful_fetch_result(
+                    text="   ",
+                    source_id="src_blank",
+                    url="https://example.com/blank",
+                )
+            ),
+        ),
+        _evidence_request(
+            sub_question=_sub_question(
+                id="sq_three",
+            ),
+            fetch_result=(
+                _successful_fetch_result(
+                    source_id="src_three",
+                    url="https://example.com/three",
+                )
+            ),
+        ),
+    ]
+
+    batch = prepare_evidence_batch(
+        requests=requests,
+        usage=BudgetUsage(
+            llm_calls_used=61,
+        ),
+        budget_policy=_policy(
+            max_llm_calls_per_run=64,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    assert batch.requested == 2
+    assert batch.authorized == 1
+    assert batch.llm_calls_used == 1
+
+    assert [
+        call.requires_llm
+        for call in batch.calls
+    ] == [
+        True,
+        False,
+        True,
+    ]
+
+    assert [
+        call.authorized
+        for call in batch.calls
+    ] == [
+        True,
+        False,
+        False,
+    ]
+
+
+def test_all_worker_permits_are_optional_research():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+            _evidence_request(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text="   ",
+                        source_id="src_blank",
+                        url="https://example.com/blank",
+                    )
+                ),
+            ),
+        ],
+        usage=BudgetUsage(),
+        budget_policy=_policy(),
+    )
+
+    assert all(
+        call.authorization.llm_purpose
+        == "optional_research"
+        for call in batch.calls
+    )
+
+
+def test_evidence_batch_is_frozen():
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(),
+        budget_policy=_policy(),
+    )
+
+    with pytest.raises(
+        FrozenInstanceError
+    ):
+        batch.calls = ()
+
+
+def test_evidence_batch_rejects_non_tuple_calls():
+    with pytest.raises(
+        TypeError,
+        match="tuple",
+    ):
+        EvidenceBatch(
+            calls=[],
+            authorization=_llm_authorization(
+                requested=0,
+                authorized=0,
+            ),
+        )
+
+
+def test_evidence_batch_rejects_non_evidence_call_items():
+    with pytest.raises(
+        TypeError,
+        match="EvidenceCall",
+    ):
+        EvidenceBatch(
+            calls=(
+                "not an EvidenceCall",
+            ),
+            authorization=_llm_authorization(
+                requested=0,
+                authorized=0,
+            ),
+        )
+
+
+def test_evidence_batch_requires_budget_authorization():
+    with pytest.raises(TypeError):
+        EvidenceBatch(
+            calls=(),
+            authorization=None,
+        )
+
+
+def test_evidence_batch_requires_llm_calls_resource():
+    with pytest.raises(
+        ValueError,
+        match="llm_calls",
+    ):
+        EvidenceBatch(
+            calls=(),
+            authorization=BudgetAuthorization(
+                resource="search_queries",
+                requested=0,
+                authorized=0,
+            ),
+        )
+
+
+def test_evidence_batch_rejects_finalization_authorization():
+    call = _evidence_call()
+
+    with pytest.raises(
+        ValueError,
+        match="optional_research",
+    ):
+        EvidenceBatch(
+            calls=(call,),
+            authorization=_llm_authorization(
+                requested=1,
+                authorized=1,
+                llm_purpose="finalization",
+            ),
+        )
+
+
+def test_evidence_batch_requested_count_must_match_calls():
+    call = _evidence_call()
+
+    with pytest.raises(
+        ValueError,
+        match="requested LLM count",
+    ):
+        EvidenceBatch(
+            calls=(call,),
+            authorization=_llm_authorization(
+                requested=0,
+                authorized=0,
+            ),
+        )
+
+
+def test_evidence_batch_authorized_count_must_match_worker_permits():
+    call = _evidence_call()
+
+    with pytest.raises(
+        ValueError,
+        match="authorized LLM count",
+    ):
+        EvidenceBatch(
+            calls=(call,),
+            authorization=_llm_authorization(
+                requested=1,
+                authorized=0,
+                reason="budget reached",
+            ),
+        )
+
+
+def test_evidence_batch_worker_permits_must_form_prefix():
+    first = _evidence_call(
+        sub_question=_sub_question(
+            id="sq_one",
+        ),
+        fetch_result=_successful_fetch_result(
+            source_id="src_one",
+            url="https://example.com/one",
+        ),
+        authorized=0,
+    )
+
+    second = _evidence_call(
+        sub_question=_sub_question(
+            id="sq_two",
+        ),
+        fetch_result=_successful_fetch_result(
+            source_id="src_two",
+            url="https://example.com/two",
+        ),
+        authorized=1,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="deterministic prefix",
+    ):
+        EvidenceBatch(
+            calls=(
+                first,
+                second,
+            ),
+            authorization=_llm_authorization(
+                requested=2,
+                authorized=1,
+                reason="budget reached",
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        (),
+        {},
+        "requests",
+        123,
+    ],
+)
+def test_prepare_evidence_batch_requires_list(
+    value,
+):
+    with pytest.raises(TypeError):
+        prepare_evidence_batch(
+            requests=value,
+            usage=BudgetUsage(),
+            budget_policy=_policy(),
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "request",
+        123,
+        {},
+        [],
+    ],
+)
+def test_prepare_evidence_batch_requires_evidence_request_items(
+    value,
+):
+    with pytest.raises(TypeError):
+        prepare_evidence_batch(
+            requests=[
+                value,
+            ],
+            usage=BudgetUsage(),
+            budget_policy=_policy(),
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {},
+        [],
+        "policy",
+        123,
+    ],
+)
+def test_prepare_evidence_batch_requires_budget_policy(
+    value,
+):
+    with pytest.raises(TypeError):
+        prepare_evidence_batch(
+            requests=[
+                _evidence_request(),
+            ],
+            usage=BudgetUsage(),
+            budget_policy=value,
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {},
+        [],
+        "usage",
+        123,
+    ],
+)
+def test_prepare_evidence_batch_requires_budget_usage(
+    value,
+):
+    with pytest.raises(TypeError):
+        prepare_evidence_batch(
+            requests=[
+                _evidence_request(),
+            ],
+            usage=value,
+            budget_policy=_policy(),
+        )
+
+
+def test_prepare_evidence_batch_does_not_mutate_usage():
+    usage = BudgetUsage(
+        llm_calls_used=5,
+    )
+
+    prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=usage,
+        budget_policy=_policy(),
+    )
+
+    assert (
+        usage.llm_calls_used
+        == 5
+    )
+
+
+# ---------------------------------------------------------------------------
+# EvidenceExtractor behavior
+# ---------------------------------------------------------------------------
 
 
 def test_extractor_creates_grounded_evidence():
@@ -630,19 +1695,32 @@ def test_extractor_creates_grounded_evidence():
     )
 
     result = extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(
-            text=excerpt,
-        ),
+        _evidence_call(
+            fetch_result=(
+                _successful_fetch_result(
+                    text=excerpt,
+                )
+            )
+        )
     )
 
     assert len(result) == 1
-    assert isinstance(result[0], Evidence)
+
+    assert isinstance(
+        result[0],
+        Evidence,
+    )
 
     assert result[0].id == "ev_one"
     assert result[0].source_id == "src_one"
-    assert result[0].sub_question_id == "sq_one"
+
+    assert (
+        result[0].sub_question_id
+        == "sq_one"
+    )
+
     assert result[0].excerpt == excerpt
+
     assert result[0].relevance_note == (
         "Directly reports the measured outcome."
     )
@@ -664,25 +1742,40 @@ def test_extractor_calls_llm_with_expected_contract():
     )
 
     extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(
-            text=page_text,
-        ),
+        _evidence_call(
+            fetch_result=(
+                _successful_fetch_result(
+                    text=page_text,
+                )
+            )
+        )
     )
 
-    assert len(llm.calls) == 1
+    assert len(
+        llm.calls
+    ) == 1
 
     call = llm.calls[0]
 
-    assert call["system_prompt"] == EVIDENCE_SYSTEM_PROMPT
-    assert call["response_model"] is EvidenceResponse
+    assert (
+        call["system_prompt"]
+        == EVIDENCE_SYSTEM_PROMPT
+    )
+
+    assert (
+        call["response_model"]
+        is EvidenceResponse
+    )
 
     assert (
         "What does the study report?"
         in call["user_prompt"]
     )
 
-    assert page_text in call["user_prompt"]
+    assert (
+        page_text
+        in call["user_prompt"]
+    )
 
     assert (
         "<untrusted_webpage_content>"
@@ -700,8 +1793,7 @@ def test_empty_evidence_response_returns_empty_list():
     )
 
     result = extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(),
+        _evidence_call()
     )
 
     assert result == []
@@ -712,7 +1804,9 @@ def test_empty_page_text_skips_llm_call():
         EvidenceResponse(
             evidence=[
                 {
-                    "excerpt": "Should never be used.",
+                    "excerpt": (
+                        "Should never be used."
+                    ),
                 }
             ]
         )
@@ -723,14 +1817,129 @@ def test_empty_page_text_skips_llm_call():
     )
 
     result = extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(
-            text="   ",
-        ),
+        _evidence_call(
+            fetch_result=(
+                _successful_fetch_result(
+                    text="   ",
+                )
+            ),
+            authorized=0,
+        )
     )
 
     assert result == []
     assert llm.calls == []
+
+
+def test_blocked_evidence_call_returns_empty_list_without_llm():
+    llm = FakeEvidenceLLM(
+        EvidenceResponse(
+            evidence=[
+                {
+                    "excerpt": (
+                        "Should never execute."
+                    ),
+                }
+            ]
+        )
+    )
+
+    extractor = EvidenceExtractor(
+        llm=llm,
+    )
+
+    result = extractor.extract(
+        _evidence_call(
+            authorized=0,
+        )
+    )
+
+    assert result == []
+    assert llm.calls == []
+
+
+def test_exhausted_budget_never_calls_provider():
+    llm = FakeEvidenceLLM(
+        EvidenceResponse()
+    )
+
+    extractor = EvidenceExtractor(
+        llm=llm,
+    )
+
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(
+            llm_calls_used=62,
+        ),
+        budget_policy=_policy(
+            max_llm_calls_per_run=64,
+            finalization_llm_reserve=2,
+        ),
+    )
+
+    assert batch.llm_calls_used == 0
+
+    call = batch.calls[0]
+
+    assert call.authorized is False
+
+    result = extractor.extract(
+        call
+    )
+
+    assert result == []
+    assert llm.calls == []
+
+
+def test_authorized_usage_exists_before_llm_failure():
+    original_error = RuntimeError(
+        "provider failed"
+    )
+
+    llm = FakeEvidenceLLM(
+        error=original_error,
+    )
+
+    extractor = EvidenceExtractor(
+        llm=llm,
+    )
+
+    batch = prepare_evidence_batch(
+        requests=[
+            _evidence_request(),
+        ],
+        usage=BudgetUsage(),
+        budget_policy=_policy(),
+    )
+
+    # Parent allocation exists before provider execution.
+    assert batch.llm_calls_used == 1
+
+    call = batch.calls[0]
+
+    assert call.authorized is True
+
+    with pytest.raises(
+        RuntimeError
+    ) as exc_info:
+        extractor.extract(
+            call
+        )
+
+    assert (
+        exc_info.value
+        is original_error
+    )
+
+    assert len(
+        llm.calls
+    ) == 1
+
+    # Provider failure does not refund the reserved batch usage.
+    assert batch.llm_calls_used == 1
 
 
 def test_multiple_grounded_candidates_create_multiple_evidence_items():
@@ -770,10 +1979,13 @@ def test_multiple_grounded_candidates_create_multiple_evidence_items():
     )
 
     result = extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(
-            text=page_text,
-        ),
+        _evidence_call(
+            fetch_result=(
+                _successful_fetch_result(
+                    text=page_text,
+                )
+            )
+        )
     )
 
     assert [
@@ -790,7 +2002,9 @@ def test_evidence_uses_trusted_source_id():
         EvidenceResponse(
             evidence=[
                 {
-                    "excerpt": "Grounded statement.",
+                    "excerpt": (
+                        "Grounded statement."
+                    ),
                 }
             ]
         )
@@ -802,14 +2016,24 @@ def test_evidence_uses_trusted_source_id():
     )
 
     result = extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(
-            text="Grounded statement.",
-            source_id="src_trusted",
-        ),
+        _evidence_call(
+            fetch_result=(
+                _successful_fetch_result(
+                    text=(
+                        "Grounded statement."
+                    ),
+                    source_id=(
+                        "src_trusted"
+                    ),
+                )
+            )
+        )
     )
 
-    assert result[0].source_id == "src_trusted"
+    assert (
+        result[0].source_id
+        == "src_trusted"
+    )
 
 
 def test_evidence_uses_trusted_sub_question_id():
@@ -822,7 +2046,9 @@ def test_evidence_uses_trusted_sub_question_id():
         EvidenceResponse(
             evidence=[
                 {
-                    "excerpt": "Grounded statement.",
+                    "excerpt": (
+                        "Grounded statement."
+                    ),
                 }
             ]
         )
@@ -834,13 +2060,35 @@ def test_evidence_uses_trusted_sub_question_id():
     )
 
     result = extractor.extract(
-        sub_question=sub_question,
-        fetch_result=_successful_fetch_result(
-            text="Grounded statement.",
+        _evidence_call(
+            sub_question=sub_question,
+            fetch_result=(
+                _successful_fetch_result(
+                    text=(
+                        "Grounded statement."
+                    ),
+                )
+            ),
+        )
+    )
+
+    assert (
+        result[0].sub_question_id
+        == "sq_trusted"
+    )
+
+
+def test_extractor_requires_evidence_call():
+    extractor = EvidenceExtractor(
+        llm=FakeEvidenceLLM(
+            EvidenceResponse()
         ),
     )
 
-    assert result[0].sub_question_id == "sq_trusted"
+    with pytest.raises(TypeError):
+        extractor.extract(
+            "not an EvidenceCall"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -870,12 +2118,17 @@ def test_hallucinated_excerpt_is_rejected():
         llm=llm,
     )
 
-    with pytest.raises(EvidenceGroundingError):
+    with pytest.raises(
+        EvidenceGroundingError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text=page_text,
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=page_text,
+                    )
+                )
+            )
         )
 
 
@@ -900,12 +2153,17 @@ def test_case_changed_excerpt_is_not_treated_as_verbatim():
         llm=llm,
     )
 
-    with pytest.raises(EvidenceGroundingError):
+    with pytest.raises(
+        EvidenceGroundingError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text=page_text,
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=page_text,
+                    )
+                )
+            )
         )
 
 
@@ -934,17 +2192,25 @@ def test_partial_exact_excerpt_is_allowed():
     )
 
     result = extractor.extract(
-        sub_question=_sub_question(),
-        fetch_result=_successful_fetch_result(
-            text=page_text,
-        ),
+        _evidence_call(
+            fetch_result=(
+                _successful_fetch_result(
+                    text=page_text,
+                )
+            )
+        )
     )
 
-    assert result[0].excerpt == excerpt
+    assert (
+        result[0].excerpt
+        == excerpt
+    )
 
 
 def test_duplicate_excerpts_are_rejected():
-    excerpt = "The study reported positive results."
+    excerpt = (
+        "The study reported positive results."
+    )
 
     extractor = EvidenceExtractor(
         llm=FakeEvidenceLLM(
@@ -961,12 +2227,17 @@ def test_duplicate_excerpts_are_rejected():
         ),
     )
 
-    with pytest.raises(LLMResponseError):
+    with pytest.raises(
+        LLMResponseError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text=excerpt,
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=excerpt,
+                    )
+                )
+            )
         )
 
 
@@ -974,7 +2245,10 @@ def test_grounding_failure_happens_before_id_generation():
     calls = []
 
     def id_factory():
-        calls.append("called")
+        calls.append(
+            "called"
+        )
+
         return "ev_one"
 
     extractor = EvidenceExtractor(
@@ -982,7 +2256,9 @@ def test_grounding_failure_happens_before_id_generation():
             EvidenceResponse(
                 evidence=[
                     {
-                        "excerpt": "Hallucinated evidence.",
+                        "excerpt": (
+                            "Hallucinated evidence."
+                        ),
                     }
                 ]
             )
@@ -990,14 +2266,75 @@ def test_grounding_failure_happens_before_id_generation():
         id_factory=id_factory,
     )
 
-    with pytest.raises(EvidenceGroundingError):
+    with pytest.raises(
+        EvidenceGroundingError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text="Actual webpage content.",
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=(
+                            "Actual webpage content."
+                        ),
+                    )
+                )
+            )
         )
 
+    assert calls == []
+
+
+def test_mixed_valid_and_invalid_evidence_fails_atomically_before_id_generation():
+    """One bad excerpt rejects the complete response."""
+
+    calls = []
+
+    def id_factory():
+        calls.append(
+            "called"
+        )
+
+        return "ev_one"
+
+    page_text = (
+        "This statement is genuinely present in the page."
+    )
+
+    extractor = EvidenceExtractor(
+        llm=FakeEvidenceLLM(
+            EvidenceResponse(
+                evidence=[
+                    {
+                        "excerpt": (
+                            "This statement is genuinely present in the page."
+                        ),
+                    },
+                    {
+                        "excerpt": (
+                            "This statement was never present."
+                        ),
+                    },
+                ]
+            )
+        ),
+        id_factory=id_factory,
+    )
+
+    with pytest.raises(
+        EvidenceGroundingError
+    ):
+        extractor.extract(
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=page_text,
+                    )
+                )
+            )
+        )
+
+    # Atomic fail-closed behavior:
+    # no trusted Evidence object was started.
     assert calls == []
 
 
@@ -1005,10 +2342,15 @@ def test_duplicate_detection_happens_before_id_generation():
     calls = []
 
     def id_factory():
-        calls.append("called")
+        calls.append(
+            "called"
+        )
+
         return "ev_one"
 
-    excerpt = "Grounded evidence."
+    excerpt = (
+        "Grounded evidence."
+    )
 
     extractor = EvidenceExtractor(
         llm=FakeEvidenceLLM(
@@ -1026,86 +2368,25 @@ def test_duplicate_detection_happens_before_id_generation():
         id_factory=id_factory,
     )
 
-    with pytest.raises(LLMResponseError):
+    with pytest.raises(
+        LLMResponseError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text=excerpt,
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=excerpt,
+                    )
+                )
+            )
         )
 
     assert calls == []
 
 
 # ---------------------------------------------------------------------------
-# Input and response validation
+# Response validation
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        "not a SubQuestion",
-        123,
-        {},
-        [],
-    ],
-)
-def test_extractor_requires_sub_question_model(value):
-    extractor = EvidenceExtractor(
-        llm=FakeEvidenceLLM(
-            EvidenceResponse()
-        ),
-    )
-
-    with pytest.raises(TypeError):
-        extractor.extract(
-            sub_question=value,
-            fetch_result=_successful_fetch_result(),
-        )
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        None,
-        "not a SourceFetchResult",
-        123,
-        {},
-        [],
-    ],
-)
-def test_extractor_requires_source_fetch_result(value):
-    extractor = EvidenceExtractor(
-        llm=FakeEvidenceLLM(
-            EvidenceResponse()
-        ),
-    )
-
-    with pytest.raises(TypeError):
-        extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=value,
-        )
-
-
-def test_failed_fetch_result_cannot_be_used_for_evidence():
-    llm = FakeEvidenceLLM(
-        EvidenceResponse()
-    )
-
-    extractor = EvidenceExtractor(
-        llm=llm,
-    )
-
-    with pytest.raises(ValueError):
-        extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_failed_fetch_result(),
-        )
-
-    assert llm.calls == []
 
 
 def test_unexpected_llm_response_type_is_rejected():
@@ -1115,10 +2396,11 @@ def test_unexpected_llm_response_type_is_rejected():
         ),
     )
 
-    with pytest.raises(LLMResponseError):
+    with pytest.raises(
+        LLMResponseError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(),
+            _evidence_call()
         )
 
 
@@ -1133,7 +2415,9 @@ def test_blank_evidence_id_is_rejected():
             EvidenceResponse(
                 evidence=[
                     {
-                        "excerpt": "Grounded evidence.",
+                        "excerpt": (
+                            "Grounded evidence."
+                        ),
                     }
                 ]
             )
@@ -1141,12 +2425,19 @@ def test_blank_evidence_id_is_rejected():
         id_factory=lambda: "   ",
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(
+        RuntimeError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text="Grounded evidence.",
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=(
+                            "Grounded evidence."
+                        ),
+                    )
+                )
+            )
         )
 
 
@@ -1159,13 +2450,17 @@ def test_blank_evidence_id_is_rejected():
         [],
     ],
 )
-def test_evidence_id_factory_must_return_string(value):
+def test_evidence_id_factory_must_return_string(
+    value,
+):
     extractor = EvidenceExtractor(
         llm=FakeEvidenceLLM(
             EvidenceResponse(
                 evidence=[
                     {
-                        "excerpt": "Grounded evidence.",
+                        "excerpt": (
+                            "Grounded evidence."
+                        ),
                     }
                 ]
             )
@@ -1173,18 +2468,26 @@ def test_evidence_id_factory_must_return_string(value):
         id_factory=lambda: value,
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(
+        RuntimeError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text="Grounded evidence.",
-            ),
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=(
+                            "Grounded evidence."
+                        ),
+                    )
+                )
+            )
         )
 
 
 def test_duplicate_evidence_ids_are_rejected():
     page_text = (
-        "First grounded statement. Second grounded statement."
+        "First grounded statement. "
+        "Second grounded statement."
     )
 
     extractor = EvidenceExtractor(
@@ -1192,10 +2495,14 @@ def test_duplicate_evidence_ids_are_rejected():
             EvidenceResponse(
                 evidence=[
                     {
-                        "excerpt": "First grounded statement.",
+                        "excerpt": (
+                            "First grounded statement."
+                        ),
                     },
                     {
-                        "excerpt": "Second grounded statement.",
+                        "excerpt": (
+                            "Second grounded statement."
+                        ),
                     },
                 ]
             )
@@ -1203,10 +2510,15 @@ def test_duplicate_evidence_ids_are_rejected():
         id_factory=lambda: "ev_same",
     )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(
+        RuntimeError
+    ):
         extractor.extract(
-            sub_question=_sub_question(),
-            fetch_result=_successful_fetch_result(
-                text=page_text,
-            ),
-        )        
+            _evidence_call(
+                fetch_result=(
+                    _successful_fetch_result(
+                        text=page_text,
+                    )
+                )
+            )
+        )

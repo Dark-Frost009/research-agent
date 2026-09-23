@@ -87,7 +87,9 @@ class GeminiLLMClient:
                 "Gemini text generation request failed."
             ) from exc
 
-        return self._extract_response_text(response)
+        return self._extract_response_text(
+            response
+        )
 
     def generate_structured(
         self,
@@ -102,13 +104,20 @@ class GeminiLLMClient:
             user_prompt,
         )
 
-        if not isinstance(response_model, type) or not issubclass(
+        if not isinstance(
+            response_model,
+            type,
+        ) or not issubclass(
             response_model,
             BaseModel,
         ):
             raise TypeError(
                 "response_model must be a Pydantic BaseModel subclass."
             )
+
+        response_json_schema = (
+            response_model.model_json_schema()
+        )
 
         try:
             response = self._client.models.generate_content(
@@ -117,7 +126,7 @@ class GeminiLLMClient:
                 config=types.GenerateContentConfig(
                     system_instruction=clean_system_prompt,
                     response_mime_type="application/json",
-                    response_schema=response_model,
+                    response_json_schema=response_json_schema,
                 ),
             )
         except Exception as exc:
@@ -125,13 +134,19 @@ class GeminiLLMClient:
                 "Gemini structured generation request failed."
             ) from exc
 
-        response_text = self._extract_response_text(response)
+        response_text = self._extract_response_text(
+            response
+        )
 
         try:
             return response_model.model_validate_json(
                 response_text
             )
-        except (ValidationError, ValueError, TypeError) as exc:
+        except (
+            ValidationError,
+            ValueError,
+            TypeError,
+        ) as exc:
             raise LLMResponseError(
                 "Gemini returned a response that did not satisfy "
                 "the expected structured schema."
@@ -143,18 +158,28 @@ class GeminiLLMClient:
         user_prompt: str,
     ) -> tuple[str, str]:
         """Validate and normalize trusted/user prompt strings."""
-        if not isinstance(system_prompt, str):
+        if not isinstance(
+            system_prompt,
+            str,
+        ):
             raise TypeError(
                 "system_prompt must be a string."
             )
 
-        if not isinstance(user_prompt, str):
+        if not isinstance(
+            user_prompt,
+            str,
+        ):
             raise TypeError(
                 "user_prompt must be a string."
             )
 
-        clean_system_prompt = system_prompt.strip()
-        clean_user_prompt = user_prompt.strip()
+        clean_system_prompt = (
+            system_prompt.strip()
+        )
+        clean_user_prompt = (
+            user_prompt.strip()
+        )
 
         if not clean_system_prompt:
             raise ValueError(
@@ -166,10 +191,15 @@ class GeminiLLMClient:
                 "user_prompt must not be blank."
             )
 
-        return clean_system_prompt, clean_user_prompt
+        return (
+            clean_system_prompt,
+            clean_user_prompt,
+        )
 
     @staticmethod
-    def _extract_response_text(response: Any) -> str:
+    def _extract_response_text(
+        response: Any,
+    ) -> str:
         """Extract and validate text from a Gemini SDK response."""
         try:
             text = response.text
@@ -178,7 +208,13 @@ class GeminiLLMClient:
                 "Gemini response did not expose usable text."
             ) from exc
 
-        if not isinstance(text, str) or not text.strip():
+        if (
+            not isinstance(
+                text,
+                str,
+            )
+            or not text.strip()
+        ):
             raise LLMResponseError(
                 "Gemini returned an empty text response."
             )

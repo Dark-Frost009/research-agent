@@ -1,11 +1,11 @@
-"""Prompt contract for grounded research synthesis.
+"""Prompt construction for grounded research synthesis.
 
-The synthesizer receives only evidence that has already passed the
-deterministic grounding layer.
+The synthesis LLM receives only controlled evidence handles such as E1
+and E2. Trusted internal Evidence IDs are never exposed to the model.
 
-Evidence excerpts are still external source material and therefore
-remain untrusted data. The model may use them as evidence but must not
-follow instructions that appear inside them.
+Only grounded Evidence.excerpt text is included in the evidence catalog.
+LLM-generated relevance notes are intentionally excluded from factual
+synthesis input.
 """
 
 from research_agent.models.schemas import Evidence
@@ -29,7 +29,9 @@ Citation requirements:
 - Reference only handles that appear in the supplied evidence catalog.
 - Do not invent evidence handles.
 - Do not generate internal evidence IDs, source IDs, citation IDs, or URLs.
-- Each supported claim must list the evidence handles that support it.
+- Each supported claim must list the evidence items that support it.
+- For every evidence item supporting a claim, provide a supporting_quote
+  copied verbatim from that evidence item's excerpt.
 - Each claim_text must appear verbatim in the content field.
 
 Security requirements:
@@ -42,23 +44,24 @@ Security requirements:
 Output requirements:
 - Produce a clear research answer in the content field.
 - Separately identify the factual claims used in that answer.
-- For each factual claim, provide one or more supporting evidence handles.
+- For each factual claim, provide one or more supporting evidence items.
 - Do not add unsupported claims merely to make the answer more complete.
 """.strip()
 
 
-def build_evidence_catalog(
+def assign_evidence_handles(
     evidence: list[Evidence],
-) -> tuple[str, dict[str, str]]:
-    """Build controlled E1/E2/... handles for trusted Evidence objects.
+) -> dict[str, Evidence]:
+    """Assign deterministic E1/E2/... handles to trusted Evidence objects.
 
-    Only grounded evidence excerpts are exposed as factual source material.
-    LLM-generated relevance notes are intentionally excluded.
+    This function is the single source of truth for evidence-handle
+    assignment.
 
-    Returns:
-        A tuple containing:
-        - human-readable evidence catalog for the LLM
-        - mapping from controlled handle to trusted Evidence.id
+    Handles are assigned strictly according to input order.
+
+    Raises:
+        TypeError: if evidence is not a list or contains a non-Evidence item.
+        ValueError: if duplicate Evidence IDs are present.
     """
 
     if not isinstance(evidence, list):
@@ -66,8 +69,7 @@ def build_evidence_catalog(
             "evidence must be a list."
         )
 
-    lines: list[str] = []
-    handle_map: dict[str, str] = {}
+    handle_map: dict[str, Evidence] = {}
     seen_evidence_ids: set[str] = set()
 
     for index, item in enumerate(
@@ -90,16 +92,46 @@ def build_evidence_catalog(
 
         handle = f"E{index}"
 
-        handle_map[handle] = item.id
+        handle_map[handle] = item
 
+    return handle_map
+
+
+def build_evidence_catalog(
+    evidence: list[Evidence],
+) -> tuple[str, dict[str, str]]:
+    """Build an LLM-visible catalog using controlled evidence handles.
+
+    Only grounded Evidence.excerpt values are exposed as factual source
+    material. LLM-generated relevance_note values are intentionally excluded.
+
+    The public return contract remains:
+
+        tuple[str, dict[str, str]]
+
+    where the second value maps controlled handles to trusted Evidence IDs.
+    """
+
+    evidence_lookup = assign_evidence_handles(
+        evidence
+    )
+
+    lines: list[str] = []
+
+    for handle, item in evidence_lookup.items():
         lines.append(
             f"[{handle}]\n"
             f"Excerpt: {item.excerpt}\n"
         )
 
+    handle_to_id = {
+        handle: item.id
+        for handle, item in evidence_lookup.items()
+    }
+
     return (
         "\n".join(lines).strip(),
-        handle_map,
+        handle_to_id,
     )
 
 

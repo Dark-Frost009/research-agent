@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from research_agent.llm.client import (
     LLMConfigurationError,
@@ -23,14 +23,29 @@ class ExampleResponse(BaseModel):
     confidence: int
 
 
+class StrictExampleResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid"
+    )
+
+    answer: str
+    confidence: int
+
+
 def _fake_client_with_response(text: object):
     """Create an injected fake Gemini client returning response.text."""
-    response = SimpleNamespace(text=text)
+    response = SimpleNamespace(
+        text=text
+    )
 
     models = Mock()
-    models.generate_content.return_value = response
+    models.generate_content.return_value = (
+        response
+    )
 
-    client = SimpleNamespace(models=models)
+    client = SimpleNamespace(
+        models=models
+    )
 
     return client, models
 
@@ -49,8 +64,12 @@ def _fake_client_with_response(text: object):
         "\n",
     ],
 )
-def test_model_must_not_be_blank(model):
-    with pytest.raises(LLMConfigurationError):
+def test_model_must_not_be_blank(
+    model,
+):
+    with pytest.raises(
+        LLMConfigurationError
+    ):
         GeminiLLMClient(
             model=model,
             client=Mock(),
@@ -66,8 +85,12 @@ def test_model_must_not_be_blank(model):
         "   ",
     ],
 )
-def test_api_key_is_required_when_client_is_not_injected(api_key):
-    with pytest.raises(LLMConfigurationError):
+def test_api_key_is_required_when_client_is_not_injected(
+    api_key,
+):
+    with pytest.raises(
+        LLMConfigurationError
+    ):
         GeminiLLMClient(
             model="gemini-test",
             api_key=api_key,
@@ -82,11 +105,18 @@ def test_injected_client_does_not_require_api_key():
         client=injected_client,
     )
 
-    assert client._client is injected_client
+    assert (
+        client._client
+        is injected_client
+    )
 
 
 def test_model_name_is_stripped():
-    fake_client, models = _fake_client_with_response("hello")
+    fake_client, models = (
+        _fake_client_with_response(
+            "hello"
+        )
+    )
 
     client = GeminiLLMClient(
         model="  gemini-test  ",
@@ -98,12 +128,21 @@ def test_model_name_is_stripped():
         user_prompt="user",
     )
 
-    assert models.generate_content.call_args.kwargs["model"] == "gemini-test"
+    assert (
+        models.generate_content
+        .call_args.kwargs["model"]
+        == "gemini-test"
+    )
 
 
-def test_api_key_is_stripped_before_sdk_initialization(monkeypatch):
+def test_api_key_is_stripped_before_sdk_initialization(
+    monkeypatch,
+):
     sdk_client = object()
-    constructor = Mock(return_value=sdk_client)
+
+    constructor = Mock(
+        return_value=sdk_client
+    )
 
     monkeypatch.setattr(
         "research_agent.llm.gemini.genai.Client",
@@ -119,11 +158,18 @@ def test_api_key_is_stripped_before_sdk_initialization(monkeypatch):
         api_key="secret-key",
     )
 
-    assert client._client is sdk_client
+    assert (
+        client._client
+        is sdk_client
+    )
 
 
-def test_sdk_initialization_failure_is_wrapped(monkeypatch):
-    original_error = RuntimeError("SDK initialization failed")
+def test_sdk_initialization_failure_is_wrapped(
+    monkeypatch,
+):
+    original_error = RuntimeError(
+        "SDK initialization failed"
+    )
 
     constructor = Mock(
         side_effect=original_error
@@ -142,7 +188,10 @@ def test_sdk_initialization_failure_is_wrapped(monkeypatch):
             api_key="secret-key",
         )
 
-    assert exc_info.value.__cause__ is original_error
+    assert (
+        exc_info.value.__cause__
+        is original_error
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -159,15 +208,23 @@ def test_sdk_initialization_failure_is_wrapped(monkeypatch):
         "\n",
     ],
 )
-def test_blank_system_prompt_is_rejected(system_prompt):
-    client, _ = _fake_client_with_response("hello")
+def test_blank_system_prompt_is_rejected(
+    system_prompt,
+):
+    client, _ = (
+        _fake_client_with_response(
+            "hello"
+        )
+    )
 
     gemini = GeminiLLMClient(
         model="gemini-test",
         client=client,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError
+    ):
         gemini.generate_text(
             system_prompt=system_prompt,
             user_prompt="user",
@@ -183,15 +240,23 @@ def test_blank_system_prompt_is_rejected(system_prompt):
         "\n",
     ],
 )
-def test_blank_user_prompt_is_rejected(user_prompt):
-    client, _ = _fake_client_with_response("hello")
+def test_blank_user_prompt_is_rejected(
+    user_prompt,
+):
+    client, _ = (
+        _fake_client_with_response(
+            "hello"
+        )
+    )
 
     gemini = GeminiLLMClient(
         model="gemini-test",
         client=client,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError
+    ):
         gemini.generate_text(
             system_prompt="system",
             user_prompt=user_prompt,
@@ -207,15 +272,23 @@ def test_blank_user_prompt_is_rejected(user_prompt):
         {},
     ],
 )
-def test_system_prompt_must_be_string(system_prompt):
-    client, _ = _fake_client_with_response("hello")
+def test_system_prompt_must_be_string(
+    system_prompt,
+):
+    client, _ = (
+        _fake_client_with_response(
+            "hello"
+        )
+    )
 
     gemini = GeminiLLMClient(
         model="gemini-test",
         client=client,
     )
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError
+    ):
         gemini.generate_text(
             system_prompt=system_prompt,
             user_prompt="user",
@@ -231,15 +304,23 @@ def test_system_prompt_must_be_string(system_prompt):
         {},
     ],
 )
-def test_user_prompt_must_be_string(user_prompt):
-    client, _ = _fake_client_with_response("hello")
+def test_user_prompt_must_be_string(
+    user_prompt,
+):
+    client, _ = (
+        _fake_client_with_response(
+            "hello"
+        )
+    )
 
     gemini = GeminiLLMClient(
         model="gemini-test",
         client=client,
     )
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError
+    ):
         gemini.generate_text(
             system_prompt="system",
             user_prompt=user_prompt,
@@ -252,8 +333,10 @@ def test_user_prompt_must_be_string(user_prompt):
 
 
 def test_generate_text_returns_stripped_response():
-    fake_client, _ = _fake_client_with_response(
-        "   Gemini answer   "
+    fake_client, _ = (
+        _fake_client_with_response(
+            "   Gemini answer   "
+        )
     )
 
     client = GeminiLLMClient(
@@ -269,9 +352,13 @@ def test_generate_text_returns_stripped_response():
     assert result == "Gemini answer"
 
 
-def test_generate_text_sends_expected_request(monkeypatch):
-    fake_client, models = _fake_client_with_response(
-        "answer"
+def test_generate_text_sends_expected_request(
+    monkeypatch,
+):
+    fake_client, models = (
+        _fake_client_with_response(
+            "answer"
+        )
     )
 
     config_constructor = Mock(
@@ -279,7 +366,10 @@ def test_generate_text_sends_expected_request(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "research_agent.llm.gemini.types.GenerateContentConfig",
+        (
+            "research_agent.llm.gemini."
+            "types.GenerateContentConfig"
+        ),
         config_constructor,
     )
 
@@ -289,24 +379,35 @@ def test_generate_text_sends_expected_request(monkeypatch):
     )
 
     client.generate_text(
-        system_prompt="  trusted system  ",
-        user_prompt="  user question  ",
+        system_prompt=(
+            "  trusted system  "
+        ),
+        user_prompt=(
+            "  user question  "
+        ),
     )
 
     models.generate_content.assert_called_once_with(
         model="gemini-test",
         contents="user question",
         config={
-            "system_instruction": "trusted system",
+            "system_instruction": (
+                "trusted system"
+            ),
         },
     )
 
 
 def test_text_provider_failure_is_wrapped():
-    original_error = RuntimeError("provider failed")
+    original_error = RuntimeError(
+        "provider failed"
+    )
 
     models = Mock()
-    models.generate_content.side_effect = original_error
+
+    models.generate_content.side_effect = (
+        original_error
+    )
 
     fake_client = SimpleNamespace(
         models=models
@@ -325,7 +426,10 @@ def test_text_provider_failure_is_wrapped():
             user_prompt="user",
         )
 
-    assert exc_info.value.__cause__ is original_error
+    assert (
+        exc_info.value.__cause__
+        is original_error
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -342,9 +446,13 @@ def test_text_provider_failure_is_wrapped():
         "   ",
     ],
 )
-def test_empty_or_missing_text_is_rejected(response_text):
-    fake_client, _ = _fake_client_with_response(
-        response_text
+def test_empty_or_missing_text_is_rejected(
+    response_text,
+):
+    fake_client, _ = (
+        _fake_client_with_response(
+            response_text
+        )
     )
 
     client = GeminiLLMClient(
@@ -352,7 +460,9 @@ def test_empty_or_missing_text_is_rejected(response_text):
         client=fake_client,
     )
 
-    with pytest.raises(LLMResponseError):
+    with pytest.raises(
+        LLMResponseError
+    ):
         client.generate_text(
             system_prompt="system",
             user_prompt="user",
@@ -361,6 +471,7 @@ def test_empty_or_missing_text_is_rejected(response_text):
 
 def test_response_without_text_attribute_is_rejected():
     models = Mock()
+
     models.generate_content.return_value = (
         SimpleNamespace()
     )
@@ -374,7 +485,9 @@ def test_response_without_text_attribute_is_rejected():
         client=fake_client,
     )
 
-    with pytest.raises(LLMResponseError):
+    with pytest.raises(
+        LLMResponseError
+    ):
         client.generate_text(
             system_prompt="system",
             user_prompt="user",
@@ -382,8 +495,10 @@ def test_response_without_text_attribute_is_rejected():
 
 
 def test_non_string_response_text_is_rejected():
-    fake_client, _ = _fake_client_with_response(
-        123
+    fake_client, _ = (
+        _fake_client_with_response(
+            123
+        )
     )
 
     client = GeminiLLMClient(
@@ -391,7 +506,9 @@ def test_non_string_response_text_is_rejected():
         client=fake_client,
     )
 
-    with pytest.raises(LLMResponseError):
+    with pytest.raises(
+        LLMResponseError
+    ):
         client.generate_text(
             system_prompt="system",
             user_prompt="user",
@@ -404,8 +521,13 @@ def test_non_string_response_text_is_rejected():
 
 
 def test_generate_structured_returns_pydantic_model():
-    fake_client, _ = _fake_client_with_response(
-        '{"answer":"structured answer","confidence":90}'
+    fake_client, _ = (
+        _fake_client_with_response(
+            (
+                '{"answer":"structured answer",'
+                '"confidence":90}'
+            )
+        )
     )
 
     client = GeminiLLMClient(
@@ -419,16 +541,29 @@ def test_generate_structured_returns_pydantic_model():
         response_model=ExampleResponse,
     )
 
-    assert isinstance(result, ExampleResponse)
-    assert result.answer == "structured answer"
+    assert isinstance(
+        result,
+        ExampleResponse,
+    )
+
+    assert (
+        result.answer
+        == "structured answer"
+    )
+
     assert result.confidence == 90
 
 
-def test_generate_structured_sends_schema_configuration(
+def test_generate_structured_sends_json_schema_configuration(
     monkeypatch,
 ):
-    fake_client, models = _fake_client_with_response(
-        '{"answer":"ok","confidence":100}'
+    fake_client, models = (
+        _fake_client_with_response(
+            (
+                '{"answer":"ok",'
+                '"confidence":100}'
+            )
+        )
     )
 
     config_constructor = Mock(
@@ -436,7 +571,10 @@ def test_generate_structured_sends_schema_configuration(
     )
 
     monkeypatch.setattr(
-        "research_agent.llm.gemini.types.GenerateContentConfig",
+        (
+            "research_agent.llm.gemini."
+            "types.GenerateContentConfig"
+        ),
         config_constructor,
     )
 
@@ -446,8 +584,12 @@ def test_generate_structured_sends_schema_configuration(
     )
 
     client.generate_structured(
-        system_prompt="  planner instructions  ",
-        user_prompt="  research question  ",
+        system_prompt=(
+            "  planner instructions  "
+        ),
+        user_prompt=(
+            "  research question  "
+        ),
         response_model=ExampleResponse,
     )
 
@@ -455,10 +597,84 @@ def test_generate_structured_sends_schema_configuration(
         model="gemini-test",
         contents="research question",
         config={
-            "system_instruction": "planner instructions",
-            "response_mime_type": "application/json",
-            "response_schema": ExampleResponse,
+            "system_instruction": (
+                "planner instructions"
+            ),
+            "response_mime_type": (
+                "application/json"
+            ),
+            "response_json_schema": (
+                ExampleResponse
+                .model_json_schema()
+            ),
         },
+    )
+
+
+def test_generate_structured_passes_strict_json_schema_unchanged(
+    monkeypatch,
+):
+    fake_client, models = (
+        _fake_client_with_response(
+            (
+                '{"answer":"ok",'
+                '"confidence":100}'
+            )
+        )
+    )
+
+    config_constructor = Mock(
+        side_effect=lambda **kwargs: kwargs
+    )
+
+    monkeypatch.setattr(
+        (
+            "research_agent.llm.gemini."
+            "types.GenerateContentConfig"
+        ),
+        config_constructor,
+    )
+
+    client = GeminiLLMClient(
+        model="gemini-test",
+        client=fake_client,
+    )
+
+    expected_schema = (
+        StrictExampleResponse
+        .model_json_schema()
+    )
+
+    assert (
+        expected_schema[
+            "additionalProperties"
+        ]
+        is False
+    )
+
+    client.generate_structured(
+        system_prompt="system",
+        user_prompt="user",
+        response_model=(
+            StrictExampleResponse
+        ),
+    )
+
+    config = (
+        models.generate_content
+        .call_args.kwargs["config"]
+    )
+
+    assert (
+        config[
+            "response_json_schema"
+        ]
+        == expected_schema
+    )
+
+    assert (
+        "response_schema"
+        not in config
     )
 
 
@@ -474,8 +690,10 @@ def test_generate_structured_sends_schema_configuration(
 def test_response_model_must_be_pydantic_model(
     invalid_model,
 ):
-    fake_client, _ = _fake_client_with_response(
-        "{}"
+    fake_client, _ = (
+        _fake_client_with_response(
+            "{}"
+        )
     )
 
     client = GeminiLLMClient(
@@ -483,7 +701,9 @@ def test_response_model_must_be_pydantic_model(
         client=fake_client,
     )
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError
+    ):
         client.generate_structured(
             system_prompt="system",
             user_prompt="user",
@@ -498,15 +718,23 @@ def test_response_model_must_be_pydantic_model(
         "{",
         "[]",
         "{}",
-        '{"answer":"missing confidence"}',
-        '{"answer":123,"confidence":"wrong"}',
+        (
+            '{"answer":'
+            '"missing confidence"}'
+        ),
+        (
+            '{"answer":123,'
+            '"confidence":"wrong"}'
+        ),
     ],
 )
 def test_invalid_structured_response_is_wrapped(
     response_text,
 ):
-    fake_client, _ = _fake_client_with_response(
-        response_text
+    fake_client, _ = (
+        _fake_client_with_response(
+            response_text
+        )
     )
 
     client = GeminiLLMClient(
@@ -523,7 +751,10 @@ def test_invalid_structured_response_is_wrapped(
             response_model=ExampleResponse,
         )
 
-    assert exc_info.value.__cause__ is not None
+    assert (
+        exc_info.value.__cause__
+        is not None
+    )
 
 
 def test_structured_provider_failure_is_wrapped():
@@ -532,7 +763,10 @@ def test_structured_provider_failure_is_wrapped():
     )
 
     models = Mock()
-    models.generate_content.side_effect = original_error
+
+    models.generate_content.side_effect = (
+        original_error
+    )
 
     fake_client = SimpleNamespace(
         models=models
@@ -552,4 +786,7 @@ def test_structured_provider_failure_is_wrapped():
             response_model=ExampleResponse,
         )
 
-    assert exc_info.value.__cause__ is original_error
+    assert (
+        exc_info.value.__cause__
+        is original_error
+    )
