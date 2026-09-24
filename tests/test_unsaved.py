@@ -24,7 +24,7 @@ def test_unsaved_blocks_navigation_and_provider_calls_then_save_unlocks(store, m
         raise HistoryError("Disk unavailable")
     monkeypatch.setattr(store, "save", failed_save)
     calls = []
-    def run(question, progress):
+    def run(question, progress, *, depth=None):
         calls.append(question)
         if incomplete:
             raise ResearchInterrupted(partial(question))
@@ -38,7 +38,7 @@ def test_unsaved_blocks_navigation_and_provider_calls_then_save_unlocks(store, m
     original = app.session_state[value_key]
     app.selectbox(key="history_selection").set_value(existing)
     original_load = store.load
-    monkeypatch.setattr(store, "load", lambda *args: pytest.fail("Blocked navigation must not load"))
+    monkeypatch.setattr(store, "load", lambda *args, **kwargs: pytest.fail("Blocked navigation must not load"))
     app.button(key="open_history").click().run()
     assert not app.exception and app.session_state[value_key] == original
     assert any("current research is unsaved" in item.value for item in app.warning)
@@ -62,7 +62,7 @@ def test_unsaved_blocks_navigation_and_provider_calls_then_save_unlocks(store, m
 @pytest.mark.parametrize("incomplete", [False, True])
 def test_explicit_discard_only_removes_unsaved_session_copy(store, monkeypatch, incomplete):
     key = store.save(completed("Kept in history"))
-    monkeypatch.setattr(service, "run_question", lambda *args: pytest.fail("No provider call expected"))
+    monkeypatch.setattr(service, "run_question", lambda *args, **kwargs: pytest.fail("No provider call expected"))
     app = AppTest.from_file(APP).run()
     value_key = "incomplete_research" if incomplete else "completed_research"
     app.session_state[value_key] = partial() if incomplete else completed("Legacy unsaved")
@@ -81,7 +81,7 @@ def test_explicit_discard_only_removes_unsaved_session_copy(store, monkeypatch, 
 def test_hidden_unsaved_report_remains_recoverable(store, monkeypatch):
     saved_partial = partial()
     key = store.save(saved_partial)
-    monkeypatch.setattr(service, "run_question", lambda *args: pytest.fail("No provider call expected"))
+    monkeypatch.setattr(service, "run_question", lambda *args, **kwargs: pytest.fail("No provider call expected"))
     app = AppTest.from_file(APP).run()
     app.session_state["completed_research"] = completed("Hidden unsaved")
     app.session_state["incomplete_research"] = saved_partial

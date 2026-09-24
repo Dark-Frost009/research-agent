@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from research_agent.models.schemas import Evidence, Source
+from research_agent.depth import ResearchDepth
 
 
 STOP_REASONS = {
@@ -30,6 +31,7 @@ class IncompleteResearch(BaseModel):
     searches: int = Field(ge=0)
     warning_count: int = Field(ge=0)
     issues: tuple[str, ...] = ()
+    depth: ResearchDepth | None = None
 
     @model_validator(mode="after")
     def validate_links(self):

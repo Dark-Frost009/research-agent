@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.ui_service import CompletedResearch
 from research_agent.incomplete import IncompleteResearch
+from research_agent.depth import ResearchDepth
 
 
 class HistoryError(RuntimeError):
@@ -29,6 +30,7 @@ class _Snapshot(BaseModel):
     searches: int = Field(ge=0)
     warning_count: int = Field(ge=0)
     issues: tuple[str, ...] = ()
+    depth: ResearchDepth | None = None
 
     @model_validator(mode="after")
     def validate_links(self):
@@ -48,13 +50,14 @@ class _Snapshot(BaseModel):
     def from_result(cls, result: CompletedResearch):
         return cls(report=result.report, evidence=result.evidence, sources=result.sources,
                    iterations=result.iterations, searches=result.searches,
-                   warning_count=result.warning_count, issues=getattr(result, "issues", ()))
+                   warning_count=result.warning_count, issues=getattr(result, "issues", ()),
+                   depth=getattr(result, "depth", None))
 
     def to_result(self) -> CompletedResearch:
         return CompletedResearch(report=self.report, evidence=self.evidence,
                                  sources=self.sources, iterations=self.iterations,
                                  searches=self.searches, warning_count=self.warning_count,
-                                 issues=self.issues)
+                                 issues=self.issues, depth=self.depth)
 
 
 @dataclass(frozen=True)

@@ -60,7 +60,7 @@ def test_source_links_reject_unsafe_syntax(url):
 
 
 def test_ui_requires_question_without_provider_calls(monkeypatch):
-    monkeypatch.setattr(service, "run_question", lambda *a: pytest.fail("Unexpected provider call"))
+    monkeypatch.setattr(service, "run_question", lambda *a, **kwargs: pytest.fail("Unexpected provider call"))
     app = AppTest.from_file(APP).run()
     app.button[0].click().run()
     assert not app.exception
@@ -69,7 +69,7 @@ def test_ui_requires_question_without_provider_calls(monkeypatch):
 
 def test_ui_success_rerun_and_session_isolation(monkeypatch):
     calls = []
-    def run(question, progress):
+    def run(question, progress, *, depth=None):
         calls.append(question)
         progress("Searching the web")
         return completed(question)
@@ -90,11 +90,11 @@ def test_ui_success_rerun_and_session_isolation(monkeypatch):
 
 
 def test_ui_failed_run_preserves_previous_report_without_leaking_error(monkeypatch):
-    monkeypatch.setattr(service, "run_question", lambda q, p: completed(q))
+    monkeypatch.setattr(service, "run_question", lambda q, p, **kwargs: completed(q))
     app = AppTest.from_file(APP).run()
     app.text_area[0].set_value("Successful question")
     app.button[0].click().run()
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise LLMProviderError("PRIVATE_API_KEY_DO_NOT_DISPLAY")
     monkeypatch.setattr(service, "run_question", fail)
     app.text_area[0].set_value("Failed question")
@@ -109,7 +109,7 @@ def test_ui_fallback_does_not_claim_verified_answer(monkeypatch):
     result = completed()
     result.report.citations.clear()
     result.report.content = "Insufficient evidence."
-    monkeypatch.setattr(service, "run_question", lambda *args: result)
+    monkeypatch.setattr(service, "run_question", lambda *args, **kwargs: result)
     app = AppTest.from_file(APP).run()
     app.text_area[0].set_value("Question")
     app.button[0].click().run()
@@ -151,7 +151,7 @@ def test_extraction_diagnostics_are_safe_and_exported(monkeypatch):
     result = replace(completed(), issues=issues, warning_count=2)
     assert issues[0] in result.text_export()
     assert json.loads(result.json_export())["issues"] == list(issues)
-    monkeypatch.setattr(service, "run_question", lambda *args: result)
+    monkeypatch.setattr(service, "run_question", lambda *args, **kwargs: result)
     app = AppTest.from_file(APP).run()
     app.text_area[0].set_value("Question")
     app.button[0].click().run()
@@ -161,7 +161,7 @@ def test_extraction_diagnostics_are_safe_and_exported(monkeypatch):
 
 def test_provider_outage_is_not_presented_as_insufficient_evidence(monkeypatch):
     from research_agent.llm.client import LLMUnavailableError
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise LLMUnavailableError("PRIVATE")
     monkeypatch.setattr(service, "run_question", fail)
     app = AppTest.from_file(APP).run()

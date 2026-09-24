@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from research_agent.bootstrap import build_research_application, BootstrapConfigurationError
 from research_agent.config import Settings
+from research_agent.depth import DepthName, ResearchDepth, DepthConfigurationError, apply_depth
 from research_agent.llm.client import LLMConfigurationError, LLMProviderError, LLMResponseError, LLMUnavailableError, LLMRateLimitError
 from research_agent.main import build_initial_state
 from research_agent.models.schemas import Evidence, ResearchReport, Source
@@ -39,6 +40,7 @@ class CompletedResearch:
     searches: int
     warning_count: int
     issues: tuple[str, ...] = ()
+    depth: ResearchDepth | None = None
 
     def citation_sources(self, citation):
         evidence = {item.id: item for item in self.evidence}
@@ -61,6 +63,8 @@ class CompletedResearch:
             lines.append("No verified citations were produced.")
         if self.issues:
             lines += ["", "RESEARCH LIMITATIONS", *self.issues]
+        if getattr(self, "depth", None) is not None:
+            lines += ["", "RESEARCH DEPTH", self.depth.summary]
         return "\n".join(lines)
 
     def json_export(self) -> str:
@@ -70,6 +74,7 @@ class CompletedResearch:
             "sources": [s.model_dump(mode="json") for s in self.sources],
             "iterations": self.iterations, "searches": self.searches,
             "issues": list(self.issues),
+            "depth": self.depth.model_dump() if getattr(self, "depth", None) is not None else None,
         }, indent=2, ensure_ascii=False)
 
 
@@ -87,11 +92,20 @@ def safe_source_url(source: Source) -> str | None:
         return None
 
 
-def run_question(question: str, on_progress: Callable[[str], None]) -> CompletedResearch:
+def preview_depth(name: DepthName) -> ResearchDepth:
+    root = Path(__file__).resolve().parents[2]
+    return apply_depth(Settings(_env_file=root / ".env"), name)[1]
+
+
+def run_question(question: str, on_progress: Callable[[str], None], *, depth: DepthName | None = None) -> CompletedResearch:
     initial = build_initial_state(question)
     # Never cache an application/context: providers and workspace are per request.
     root = Path(__file__).resolve().parents[2]
-    application = build_research_application(Settings(_env_file=root / ".env"))
+    settings = Settings(_env_file=root / ".env")
+    selected_depth = None
+    if depth is not None:
+        settings, selected_depth = apply_depth(settings, depth)
+    application = build_research_application(settings)
     final_state = None
     last_stage = "Starting research"
     try:
@@ -123,6 +137,7 @@ def run_question(question: str, on_progress: Callable[[str], None]) -> Completed
             searches=state.get("search_queries_used", 0),
             warning_count=len(state.get("errors", [])),
             issues=summarize_issues(state.get("errors", [])),
+            depth=selected_depth,
         ).model_copy(deep=True)
         raise ResearchInterrupted(partial) from exc
     if final_state is None or not isinstance(final_state.get("final_report"), ResearchReport):
@@ -132,6 +147,7 @@ def run_question(question: str, on_progress: Callable[[str], None]) -> Completed
         sources=final_state["sources"], iterations=final_state["iteration_count"],
         searches=final_state["search_queries_used"], warning_count=len(final_state["errors"]),
         issues=summarize_issues(final_state["errors"]),
+        depth=selected_depth,
     )
     # Do not display a report whose citations cannot be traced to source records.
     for citation in result.report.citations:
@@ -162,6 +178,8 @@ def summarize_issues(errors: list[str]) -> tuple[str, ...]:
 
 def friendly_error(exc: Exception) -> str:
     """Do not echo provider responses, configuration values, or credentials."""
+    if isinstance(exc, DepthConfigurationError):
+        return str(exc)
     if isinstance(exc, (BootstrapConfigurationError, LLMConfigurationError, SearchConfigurationError, ValidationError)):
         return "The research service needs configuration. Check the provider settings and API keys in the project's .env file."
     if isinstance(exc, LLMUnavailableError):

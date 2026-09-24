@@ -6,7 +6,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import streamlit as st
-from research_agent.ui_service import run_question, friendly_error, safe_source_url
+from research_agent.ui_service import run_question, friendly_error, safe_source_url, preview_depth
+from research_agent.depth import DEPTH_NAMES
 from research_agent.history import get_history_store, HistoryError
 from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
 
@@ -31,10 +32,21 @@ st.caption("RESEARCH AGENT  /  YOUR RESEARCH WORKSPACE")
 st.title("Ask a question. Follow the evidence.")
 st.write("Explore the web, compare evidence, and get a report checked against its sources.")
 
+depth_name = st.radio("Research depth", DEPTH_NAMES, index=1, horizontal=True, key="research_depth")
+depth_ready = True
+try:
+    depth_limits = preview_depth(depth_name)
+except Exception as exc:
+    depth_ready = False
+    st.error(friendly_error(exc))
+else:
+    st.caption(depth_limits.summary)
+    st.caption("Your configured caps may reduce these limits. Every mode checks citations and reserves final answer verification. AI calls are application-level limits, not token or provider quota guarantees.")
+
 with st.form("research", clear_on_submit=False):
     question = st.text_area("What would you like to research?", key="question", height=120,
                             placeholder="For example: What are the main limitations of retrieval-augmented generation?")
-    submitted = st.form_submit_button("Start research", type="primary")
+    submitted = st.form_submit_button("Start research", type="primary", disabled=not depth_ready)
 
 st.caption("Uses your configured Gemini and Tavily services. Reports and incomplete runs are saved on this computer. Open them from Saved research in the sidebar.")
 
@@ -52,7 +64,7 @@ if submitted:
                 status.update(label=message)
                 progress.write(message)
             try:
-                result = run_question(question, update)
+                result = run_question(question, update, depth=depth_name)
             except ResearchInterrupted as exc:
                 status.update(label="Research stopped — incomplete run", state="error", expanded=True)
                 st.session_state["incomplete_research"] = exc.partial
@@ -143,6 +155,8 @@ if partial is not None:
     st.divider()
     st.subheader("Incomplete research")
     st.text(partial.question)
+    if getattr(partial, "depth", None) is not None:
+        st.caption("This run: " + partial.depth.summary)
     st.warning(partial.stop_message + " No verified answer was produced by this run.")
     st.caption("Last recorded stage: " + partial.last_stage)
     st.caption("Collected evidence is available below. This entry cannot resume a run; submitting the question again starts fresh.")
@@ -204,6 +218,8 @@ if result is not None:
     if st.session_state.get("saved_report_id"):
         st.caption("Saved on this computer · " + result.report.created_at.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC"))
     st.text(result.report.question)
+    if getattr(result, "depth", None) is not None:
+        st.caption("This run: " + result.depth.summary)
     a, b, c = st.columns(3)
     a.metric("Research rounds", result.iterations)
     b.metric("Searches", result.searches)

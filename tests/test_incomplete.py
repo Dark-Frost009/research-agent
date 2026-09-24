@@ -115,7 +115,7 @@ def local_history(tmp_path, monkeypatch):
 def test_ui_saves_reopens_and_switches_without_provider_calls(local_history, monkeypatch):
     old = local_history.save(completed("Previous answer"))
     calls = []
-    def fail(question, progress):
+    def fail(question, progress, *, depth=None):
         calls.append(question)
         raise ResearchInterrupted(partial(question))
     monkeypatch.setattr(service, "run_question", fail)
@@ -144,7 +144,7 @@ def test_ui_saves_reopens_and_switches_without_provider_calls(local_history, mon
 
 
 def test_ui_save_failure_retry_and_new_success(local_history, monkeypatch):
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise ResearchInterrupted(partial())
     monkeypatch.setattr(service, "run_question", fail)
     original = local_history.save
@@ -160,7 +160,7 @@ def test_ui_save_failure_retry_and_new_success(local_history, monkeypatch):
     app.button(key="retry_save_incomplete").click().run()
     app.run()
     assert not app.exception and len(local_history.list_reports()) == 1
-    monkeypatch.setattr(service, "run_question", lambda q, p: completed(q))
+    monkeypatch.setattr(service, "run_question", lambda q, p, **kwargs: completed(q))
     app.text_area[0].set_value("New successful question")
     app.button[0].click().run()
     assert not app.exception

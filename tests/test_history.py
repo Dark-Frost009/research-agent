@@ -78,7 +78,7 @@ def local_history(tmp_path, monkeypatch):
 
 def test_ui_auto_save_and_reopen_without_provider_calls(local_history, monkeypatch):
     calls = []
-    def run(question, progress):
+    def run(question, progress, *, depth=None):
         calls.append(question)
         return completed(question)
     monkeypatch.setattr(service, 'run_question', run)
@@ -98,7 +98,7 @@ def test_ui_auto_save_and_reopen_without_provider_calls(local_history, monkeypat
 
 
 def test_ui_failed_request_does_not_save(local_history, monkeypatch):
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError('Failure')
     monkeypatch.setattr(service, 'run_question', fail)
     app = AppTest.from_file(APP).run()
@@ -109,7 +109,7 @@ def test_ui_failed_request_does_not_save(local_history, monkeypatch):
 
 
 def test_ui_failed_save_keeps_downloads_and_retry_saves_once(local_history, monkeypatch):
-    monkeypatch.setattr(service, 'run_question', lambda q, p: completed(q))
+    monkeypatch.setattr(service, 'run_question', lambda q, p, **kwargs: completed(q))
     original = local_history.save
     def fail(result):
         raise HistoryError('Could not save')

@@ -1110,6 +1110,34 @@ they contain a verified answer. The interface is local and has no authentication
 it is not configured for public hosting.
 
 
+## Research depth
+
+The Streamlit **Research depth** control offers three presets. **Standard** is
+selected initially. These are maximums, not targets or guarantees of answer
+quality, runtime, token consumption, or provider quota availability:
+
+| Mode | Rounds | Searches | Sources / page reads | AI calls |
+| --- | ---: | ---: | ---: | ---: |
+| Quick | 1 | 2 | 4 / 4 | 12 |
+| Standard | 2 | 5 | 8 / 8 | 32 |
+| Thorough | 3 | 8 | 12 / 12 | 64 |
+
+Every value is capped by the existing environment configuration. For example,
+the default two-round cap limits Thorough to two rounds. The interface shows the
+effective limits before submission. Modes also cap planned sub-questions at
+2/3/5, searches per round at 2/3/5, and results per search at 3/4/5 respectively.
+Changing modes does not edit `.env`, switch models, or start a request.
+
+All modes use the same grounding and semantic verification checks. The configured
+finalization reserve is preserved and must be at least two calls; a mode cannot
+start if its AI-call ceiling leaves no capacity beyond that reserve. The AI-call
+limit counts application-level calls; SDK retries and token usage are not estimated.
+
+Completed reports, incomplete entries, and their exports retain the selected mode
+and effective limits. Changing the selector does not relabel an earlier result.
+Older history entries remain readable without invented mode information. CLI
+runs continue to use their configured budgets directly.
+
 ## Saved research history
 
 Completed web-interface runs are automatically saved to
