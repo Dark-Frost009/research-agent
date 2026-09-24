@@ -11,9 +11,6 @@ from research_agent.depth import DEPTH_NAMES
 from research_agent.history import get_history_store, HistoryError
 from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
 
-history = get_history_store()
-
-
 def unsaved_entries():
     """Include legacy sessions and hidden results, not just failed-save flags."""
     return [
@@ -50,6 +47,17 @@ st.caption("RESEARCH AGENT  /  YOUR RESEARCH WORKSPACE")
 st.title("Ask a question. Follow the evidence.")
 st.write("Explore the web, compare evidence, and get a report checked against its sources.")
 
+if st.toggle("Offline demo", key="offline_demo", help="Explore a fictional sample without providers or API keys."):
+    # Keep real widget values across Streamlit's cleanup of hidden widgets.
+    # Real result objects and unsaved-work flags are never replaced by demo data.
+    for key in ("question", "research_depth", "history_search", "history_selection"):
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
+    from research_agent.demo import render_demo
+    render_demo()
+    st.stop()
+
+history = get_history_store()
 depth_name = st.radio("Research depth", DEPTH_NAMES, index=1, horizontal=True, key="research_depth")
 depth_ready = True
 try:

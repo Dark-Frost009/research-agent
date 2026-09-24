@@ -1110,6 +1110,21 @@ they contain a verified answer. The interface is local and has no authentication
 it is not configured for public hosting.
 
 
+## Offline demo
+
+Turn on **Offline demo** near the top of the Streamlit page to explore a bundled,
+fictional library-policy example. It includes a sample answer, prepared citations,
+source excerpts, an illustrative run summary, and TXT/JSON downloads clearly marked
+`DEMO`. It does not perform search, fetch pages, call AI providers, read provider
+settings, or access research history. No API keys or internet connection are needed
+once the app and its dependencies are installed.
+
+The example is hand-authored, not a real or freshly verified research result.
+Its displayed example budget is simulated; actual provider calls are zero. Demo
+data uses a separate format and is never assigned to the real report or incomplete
+run session fields. Turn the toggle off to return to existing results and unsaved
+work. Normal session expiry and browser-refresh limitations still apply.
+
 ## Research depth
 
 The Streamlit **Research depth** control offers three presets. **Standard** is
