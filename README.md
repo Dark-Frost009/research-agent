@@ -1134,3 +1134,17 @@ does not guarantee a saved partial run. Opening an entry makes no provider calls
 and does not resume execution. Submitting the question again starts a fresh run.
 If local saving fails, the current incomplete entry remains downloadable and can
 be saved using **Save incomplete run**. Download or save it before navigating away.
+
+### Protecting unsaved work
+
+If a report or incomplete run has not been saved, starting new research and
+opening another history entry are blocked before any provider call or replacement.
+The current result stays available for download and retrying its save. This also
+protects results left in sessions from before automatic history saving existed.
+After saving, click the desired action again; blocked requests are not queued.
+
+If saving remains unavailable, download your result, open **Discard unsaved
+research…**, and select **Discard unsaved session copies** to continue. This
+explicit action removes only unsaved session results, not saved history or
+downloaded files. Session-only results still cannot survive a browser refresh,
+session expiry, or process shutdown, so save or download them before leaving.

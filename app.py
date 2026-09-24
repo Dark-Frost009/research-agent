@@ -12,6 +12,20 @@ from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
 
 history = get_history_store()
 
+
+def unsaved_entries():
+    """Include legacy sessions and hidden results, not just failed-save flags."""
+    return [
+        (value_key, saved_key)
+        for value_key, saved_key in (
+            ("completed_research", "saved_report_id"),
+            ("incomplete_research", "saved_incomplete_id"),
+        )
+        if st.session_state.get(value_key) is not None
+        and not st.session_state.get(saved_key)
+    ]
+
+
 st.set_page_config(page_title="Research Agent", page_icon="🔎", layout="centered")
 st.caption("RESEARCH AGENT  /  YOUR RESEARCH WORKSPACE")
 st.title("Ask a question. Follow the evidence.")
@@ -27,6 +41,8 @@ st.caption("Uses your configured Gemini and Tavily services. Reports and incompl
 if submitted:
     if not question.strip():
         st.warning("Enter a research question to begin.")
+    elif unsaved_entries():
+        st.warning("New research has not started. Save your unsaved research below, or download it and explicitly discard the session copy first.")
     else:
         st.session_state.pop("incomplete_research", None)
         st.session_state.pop("saved_incomplete_id", None)
@@ -71,7 +87,10 @@ with st.sidebar:
         labels = {item.id: item.label for item in saved}
         selected = st.selectbox("Saved reports", options=list(labels),
                                 format_func=labels.__getitem__, key="history_selection")
-        if st.button("Open saved research", key="open_history"):
+        open_requested = st.button("Open saved research", key="open_history")
+        if open_requested and unsaved_entries():
+            st.warning("Your current research is unsaved. Save it below, or download it and explicitly discard the session copy before opening another entry.")
+        elif open_requested:
             try:
                 opened = history.load(selected)
             except HistoryError as exc:
@@ -87,6 +106,37 @@ with st.sidebar:
                     st.session_state["history_save_failed"] = False
     else:
         st.caption("No matching saved reports." if search.strip() else "Your completed reports will appear here.")
+
+pending = unsaved_entries()
+if pending:
+    st.info("Unsaved research is protected in this browser session. Save or download it before closing or refreshing the page.")
+    with st.popover("Discard unsaved research…"):
+        st.warning("Discarding removes the unsaved results from this session. Any downloaded copies and saved history entries are kept. This cannot be undone.")
+        if st.button("Discard unsaved session copies", key="confirm_discard_unsaved"):
+            for value_key, saved_key in pending:
+                st.session_state.pop(value_key, None)
+                st.session_state.pop(saved_key, None)
+            st.session_state["history_save_failed"] = False
+            st.rerun()
+    # A session opened before this safeguard may contain a hidden unsaved
+    # report as well as an incomplete run. Keep that report recoverable too.
+    if (st.session_state.get("incomplete_research") is not None
+            and ("completed_research", "saved_report_id") in pending):
+        hidden = st.session_state["completed_research"]
+        with st.expander("Earlier unsaved report", expanded=True):
+            st.text(hidden.report.question)
+            st.download_button("Download earlier report (.txt)", hidden.text_export(),
+                               file_name="earlier-research-report.txt", mime="text/plain")
+            st.download_button("Download earlier evidence (.json)", hidden.json_export(),
+                               file_name="earlier-research-evidence.json", mime="application/json")
+            if st.button("Save earlier report", key="save_hidden_report"):
+                try:
+                    st.session_state["saved_report_id"] = history.save(hidden)
+                except HistoryError:
+                    st.error("Saving failed. The earlier report remains available to download.")
+                else:
+                    st.session_state["history_save_failed"] = False
+                    st.rerun()
 
 partial = st.session_state.get("incomplete_research")
 if partial is not None:
