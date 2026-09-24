@@ -1083,8 +1083,8 @@ Install the project dependencies, then run from the project folder:
 
 Open http://localhost:8502. Enter a question and select **Start research**.
 The page shows research progress, the completed report, source links and
-supporting excerpts, plus TXT and JSON downloads. Reports and questions are
-session-only; download them before closing or refreshing the browser.
+supporting excerpts, plus TXT and JSON downloads. Completed reports are saved locally and can be reopened from the sidebar
+after a restart. Unsubmitted question text remains session-only.
 
 The interface loads the project's `.env` file and uses the existing Gemini and
 Tavily configuration and research budgets. Every submitted request gets fresh
@@ -1094,3 +1094,22 @@ clearly labeled with its own question. Provider error details and credentials
 are not displayed. Unverified fallback reports are labeled without claiming
 they contain a verified answer. The interface is local and has no authentication;
 it is not configured for public hosting.
+
+
+## Saved research history
+
+Completed web-interface runs are automatically saved to
+`.local/research_history.sqlite` inside this project. The **Saved research**
+sidebar lets you search by question and open any saved report, including its
+citations, source URLs, supporting evidence, usage counts and diagnostic notices.
+Opening or downloading a saved report makes no provider calls. Runs returning
+an insufficient-evidence fallback are saved with their original warnings;
+requests that raise an exception are not added to history.
+
+History is local to this project and shared by browser sessions on this computer.
+It is excluded from Git. It contains report content and extracted evidence, not
+API keys, runtime contexts, or full fetched webpages. Back up the SQLite file
+while the app is stopped if you want an independent copy of your history.
+Save failures leave the report available in the current session with downloads
+and a retry button. Reports created before this feature are not recovered from
+closed sessions; an existing open result can be saved with **Save report to history**.

@@ -1,11 +1,15 @@
 """Local Streamlit entry point. Start with: python -m streamlit run app.py."""
 from pathlib import Path
+from datetime import timezone
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import streamlit as st
 from research_agent.ui_service import run_question, friendly_error, safe_source_url
+from research_agent.history import get_history_store, HistoryError
+
+history = get_history_store()
 
 st.set_page_config(page_title="Research Agent", page_icon="🔎", layout="centered")
 st.caption("RESEARCH AGENT  /  YOUR RESEARCH WORKSPACE")
@@ -17,7 +21,7 @@ with st.form("research", clear_on_submit=False):
                             placeholder="For example: What are the main limitations of retrieval-augmented generation?")
     submitted = st.form_submit_button("Start research", type="primary")
 
-st.caption("Uses your configured Gemini and Tavily services. Reports stay in this browser session; download a copy to keep them.")
+st.caption("Uses your configured Gemini and Tavily services. Completed reports are saved on this computer. Open them from Saved research in the sidebar.")
 
 if submitted:
     if not question.strip():
@@ -35,12 +39,60 @@ if submitted:
                 st.error(friendly_error(exc))
             else:
                 st.session_state["completed_research"] = result
+                st.session_state["saved_report_id"] = None
+                try:
+                    st.session_state["saved_report_id"] = history.save(result)
+                except HistoryError:
+                    st.session_state["history_save_failed"] = True
+                else:
+                    st.session_state["history_save_failed"] = False
                 status.update(label="Research finished", state="complete", expanded=False)
 
+with st.sidebar:
+    st.header("Saved research")
+    st.caption("Stored on this computer. Opening a report does not use Gemini.")
+    search = st.text_input("Find a saved question", key="history_search")
+    try:
+        saved = history.list_reports(search)
+    except HistoryError:
+        st.warning("Local history could not be read. You can still research and download reports.")
+        saved = []
+    if saved:
+        labels = {item.id: item.label for item in saved}
+        selected = st.selectbox("Saved reports", options=list(labels),
+                                format_func=labels.__getitem__, key="history_selection")
+        if st.button("Open report", key="open_history"):
+            try:
+                opened = history.load(selected)
+            except HistoryError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["completed_research"] = opened
+                st.session_state["saved_report_id"] = selected
+                st.session_state["history_save_failed"] = False
+    else:
+        st.caption("No matching saved reports." if search.strip() else "Your completed reports will appear here.")
+
 result = st.session_state.get("completed_research")
+if result is not None and not st.session_state.get("saved_report_id"):
+    if st.session_state.get("history_save_failed"):
+        st.warning("This report could not be saved to history. Download it now or retry saving before closing the page.")
+    # Also lets an existing pre-history browser session preserve its report.
+    if st.button("Save report to history", key="retry_save_history"):
+        try:
+            st.session_state["saved_report_id"] = history.save(result)
+        except HistoryError:
+            st.session_state["history_save_failed"] = True
+            st.error("Saving failed. Your report is still available to download below.")
+        else:
+            st.session_state["history_save_failed"] = False
+            st.rerun()
+
 if result is not None:
     st.divider()
-    st.subheader("Latest completed report")
+    st.subheader("Research report")
+    if st.session_state.get("saved_report_id"):
+        st.caption("Saved on this computer · " + result.report.created_at.astimezone(timezone.utc).strftime("%d %b %Y, %H:%M UTC"))
     st.text(result.report.question)
     a, b, c = st.columns(3)
     a.metric("Research rounds", result.iterations)

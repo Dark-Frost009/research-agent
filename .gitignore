@@ -25,3 +25,5 @@ Thumbs.db
 
 # Evaluation outputs
 evaluation/results/
+# Private local research history
+.local/

@@ -170,3 +170,10 @@ def test_provider_outage_is_not_presented_as_insufficient_evidence(monkeypatch):
     assert not app.exception
     assert "temporarily unavailable" in app.error[0].value
     assert "PRIVATE" not in app.error[0].value
+
+
+@pytest.fixture(autouse=True)
+def isolated_ui_history(tmp_path, monkeypatch):
+    import research_agent.history as history_module
+    store = history_module.HistoryStore(tmp_path / "ui-history.sqlite")
+    monkeypatch.setattr(history_module, "get_history_store", lambda: store)
