@@ -992,7 +992,7 @@ Gemini is the only production LLM provider wired in bootstrap.py
 
 Tavily is the only production search provider wired in bootstrap.py
 
-The CLI is currently the primary user interface
+Local Streamlit interface and CLI; no authenticated public hosting
 
 Search and webpage availability can vary between runs
 
@@ -1104,7 +1104,10 @@ sidebar lets you search by question and open any saved report, including its
 citations, source URLs, supporting evidence, usage counts and diagnostic notices.
 Opening or downloading a saved report makes no provider calls. Runs returning
 an insufficient-evidence fallback are saved with their original warnings;
-requests that raise an exception are not added to history.
+graph runs interrupted by an exception are saved separately as **Incomplete**
+entries with the question, collected sources and evidence, counters, last recorded
+stage, and a fixed explanation of why the run stopped. Configuration failures
+before graph execution do not create an entry.
 
 History is local to this project and shared by browser sessions on this computer.
 It is excluded from Git. It contains report content and extracted evidence, not
@@ -1113,3 +1116,21 @@ while the app is stopped if you want an independent copy of your history.
 Save failures leave the report available in the current session with downloads
 and a retry button. Reports created before this feature are not recovered from
 closed sessions; an existing open result can be saved with **Save report to history**.
+
+### Incomplete research
+
+An incomplete entry has no report, draft answer, or citations. Opening it shows
+collected source excerpts and offers a JSON download, with an explicit warning
+that the run did not produce a verified answer. Rejected synthesis text and raw
+exception messages are never included in its snapshot. Existing completed
+reports remain available in history; they are not displayed as the interrupted
+run's answer. Verification rejections already handled by the graph continue to
+produce their existing, clearly labeled fallback reports.
+
+Incomplete entries capture the last graph state delivered to the interface when
+an ordinary execution exception is caught. They are **not checkpoints**: stopping
+the process, closing the app during execution, cancellation, or a power failure
+does not guarantee a saved partial run. Opening an entry makes no provider calls
+and does not resume execution. Submitting the question again starts a fresh run.
+If local saving fails, the current incomplete entry remains downloadable and can
+be saved using **Save incomplete run**. Download or save it before navigating away.

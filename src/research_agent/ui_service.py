@@ -13,6 +13,7 @@ from research_agent.llm.client import LLMConfigurationError, LLMProviderError, L
 from research_agent.main import build_initial_state
 from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.tools.web_search import SearchConfigurationError
+from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
 from pydantic import ValidationError
 
 
@@ -91,16 +92,38 @@ def run_question(question: str, on_progress: Callable[[str], None]) -> Completed
     root = Path(__file__).resolve().parents[2]
     application = build_research_application(Settings(_env_file=root / ".env"))
     final_state = None
-    for mode, payload in application.graph.stream(
-        initial, context=application.context, stream_mode=["updates", "values"],
-        config={"recursion_limit": max(100, application.context.budget_policy.limits.max_research_iterations * 20 + 10)},
-    ):
-        if mode == "updates":
-            for node in payload:
-                if node in STAGES:
-                    on_progress(STAGES[node])
-        elif mode == "values":
-            final_state = payload
+    last_stage = "Starting research"
+    try:
+        for mode, payload in application.graph.stream(
+            initial, context=application.context, stream_mode=["updates", "values"],
+            config={"recursion_limit": max(100, application.context.budget_policy.limits.max_research_iterations * 20 + 10)},
+        ):
+            if mode == "updates":
+                for node in payload:
+                    if node in STAGES:
+                        last_stage = STAGES[node]
+                        on_progress(last_stage)
+            elif mode == "values":
+                final_state = payload
+    except Exception as exc:
+        # Whitelist completed state fields. Never retain raw exceptions,
+        # fetched pages, runtime objects, synthesis text, or rejected claims.
+        state = final_state if final_state is not None else initial
+        reason = (
+            "quota" if isinstance(exc, LLMRateLimitError) else
+            "unavailable" if isinstance(exc, LLMUnavailableError) else
+            "provider" if isinstance(exc, LLMProviderError) else
+            "response" if isinstance(exc, LLMResponseError) else "unexpected"
+        )
+        partial = IncompleteResearch(
+            question=question.strip(), last_stage=last_stage, reason=reason,
+            sources=state.get("sources", []), evidence=state.get("evidence", []),
+            iterations=state.get("iteration_count", 0),
+            searches=state.get("search_queries_used", 0),
+            warning_count=len(state.get("errors", [])),
+            issues=summarize_issues(state.get("errors", [])),
+        ).model_copy(deep=True)
+        raise ResearchInterrupted(partial) from exc
     if final_state is None or not isinstance(final_state.get("final_report"), ResearchReport):
         raise RuntimeError("Research completed without a report.")
     result = CompletedResearch(

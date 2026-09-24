@@ -1,4 +1,4 @@
-"""Local, versioned storage of completed reports, never provider credentials."""
+"""Local, versioned storage of completed reports and incomplete research."""
 from __future__ import annotations
 
 from contextlib import closing
@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.ui_service import CompletedResearch
+from research_agent.incomplete import IncompleteResearch
 
 
 class HistoryError(RuntimeError):
@@ -62,13 +63,15 @@ class SavedReport:
     question: str
     created_at: str
     citation_count: int
+    status: str = "completed"
 
     @property
     def label(self) -> str:
         question = " ".join(self.question.split())
         if len(question) > 90:
             question = question[:87] + "..."
-        return f"{self.created_at[:16].replace('T', ' ')} UTC · {question} · {self.id[:6]}"
+        prefix = "Incomplete · " if self.status == "incomplete" else ""
+        return f"{prefix}{self.created_at[:16].replace('T', ' ')} UTC · {question} · {self.id[:6]}"
 
 
 class HistoryStore:
@@ -86,16 +89,31 @@ class HistoryStore:
                 created_at TEXT NOT NULL, citation_count INTEGER NOT NULL,
                 payload TEXT NOT NULL
             )""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS incomplete_runs (
+                id TEXT PRIMARY KEY, question TEXT NOT NULL,
+                created_at TEXT NOT NULL, payload TEXT NOT NULL
+            )""")
             connection.commit()
             return connection
         except Exception:
             connection.close()
             raise
 
-    def save(self, result: CompletedResearch) -> str:
+    def save(self, result: CompletedResearch | IncompleteResearch) -> str:
         """Save once per completed run; duplicate questions remain distinct runs."""
         from datetime import timezone
         try:
+            if isinstance(result, IncompleteResearch):
+                # Revalidate even if a caller constructed/copied without validation.
+                snapshot = IncompleteResearch.model_validate_json(result.model_dump_json())
+                record_id = uuid4().hex
+                with closing(self._connect()) as connection, connection:
+                    connection.execute("INSERT INTO incomplete_runs VALUES (?, ?, ?, ?)", (
+                        record_id, snapshot.question,
+                        snapshot.created_at.astimezone(timezone.utc).isoformat(),
+                        snapshot.model_dump_json(),
+                    ))
+                return record_id
             snapshot = _Snapshot.from_result(result)
             record_id = uuid4().hex
             created_at = snapshot.report.created_at.astimezone(timezone.utc).isoformat()
@@ -114,21 +132,27 @@ class HistoryStore:
         try:
             with closing(self._connect()) as connection:
                 rows = connection.execute(
-                    "SELECT id, question, created_at, citation_count FROM reports "
-                    "ORDER BY created_at DESC, rowid DESC"
+                    "SELECT id, question, created_at, citation_count, 'completed' FROM reports "
+                    "UNION ALL SELECT id, question, created_at, 0, 'incomplete' FROM incomplete_runs "
+                    "ORDER BY created_at DESC, id DESC"
                 ).fetchall()
             query = search.strip().casefold()
             return [SavedReport(*row) for row in rows if query in row[1].casefold()]
         except (OSError, sqlite3.Error) as exc:
             raise HistoryError("Could not read local research history.") from exc
 
-    def load(self, record_id: str) -> CompletedResearch:
+    def load(self, record_id: str) -> CompletedResearch | IncompleteResearch:
         if not self.path.exists():
             raise HistoryError("This saved report is no longer available.")
         try:
             with closing(self._connect()) as connection:
                 row = connection.execute("SELECT payload FROM reports WHERE id = ?",
                                          (record_id,)).fetchone()
+                if row is None:
+                    partial = connection.execute("SELECT payload FROM incomplete_runs WHERE id = ?",
+                                                 (record_id,)).fetchone()
+                    if partial is not None:
+                        return IncompleteResearch.model_validate_json(partial[0])
             if row is None:
                 raise HistoryError("This saved report is no longer available.")
             return _Snapshot.model_validate_json(row[0]).to_result()

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 import streamlit as st
 from research_agent.ui_service import run_question, friendly_error, safe_source_url
 from research_agent.history import get_history_store, HistoryError
+from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
 
 history = get_history_store()
 
@@ -21,12 +22,14 @@ with st.form("research", clear_on_submit=False):
                             placeholder="For example: What are the main limitations of retrieval-augmented generation?")
     submitted = st.form_submit_button("Start research", type="primary")
 
-st.caption("Uses your configured Gemini and Tavily services. Completed reports are saved on this computer. Open them from Saved research in the sidebar.")
+st.caption("Uses your configured Gemini and Tavily services. Reports and incomplete runs are saved on this computer. Open them from Saved research in the sidebar.")
 
 if submitted:
     if not question.strip():
         st.warning("Enter a research question to begin.")
     else:
+        st.session_state.pop("incomplete_research", None)
+        st.session_state.pop("saved_incomplete_id", None)
         with st.status("Starting your research", expanded=True) as status:
             progress = st.empty()
             def update(message):
@@ -34,6 +37,13 @@ if submitted:
                 progress.write(message)
             try:
                 result = run_question(question, update)
+            except ResearchInterrupted as exc:
+                status.update(label="Research stopped — incomplete run", state="error", expanded=True)
+                st.session_state["incomplete_research"] = exc.partial
+                try:
+                    st.session_state["saved_incomplete_id"] = history.save(exc.partial)
+                except HistoryError:
+                    st.session_state["saved_incomplete_id"] = None
             except Exception as exc:
                 status.update(label="Research could not finish", state="error", expanded=True)
                 st.error(friendly_error(exc))
@@ -61,17 +71,67 @@ with st.sidebar:
         labels = {item.id: item.label for item in saved}
         selected = st.selectbox("Saved reports", options=list(labels),
                                 format_func=labels.__getitem__, key="history_selection")
-        if st.button("Open report", key="open_history"):
+        if st.button("Open saved research", key="open_history"):
             try:
                 opened = history.load(selected)
             except HistoryError as exc:
                 st.error(str(exc))
             else:
-                st.session_state["completed_research"] = opened
-                st.session_state["saved_report_id"] = selected
-                st.session_state["history_save_failed"] = False
+                if isinstance(opened, IncompleteResearch):
+                    st.session_state["incomplete_research"] = opened
+                    st.session_state["saved_incomplete_id"] = selected
+                else:
+                    st.session_state.pop("incomplete_research", None)
+                    st.session_state["completed_research"] = opened
+                    st.session_state["saved_report_id"] = selected
+                    st.session_state["history_save_failed"] = False
     else:
         st.caption("No matching saved reports." if search.strip() else "Your completed reports will appear here.")
+
+partial = st.session_state.get("incomplete_research")
+if partial is not None:
+    st.divider()
+    st.subheader("Incomplete research")
+    st.text(partial.question)
+    st.warning(partial.stop_message + " No verified answer was produced by this run.")
+    st.caption("Last recorded stage: " + partial.last_stage)
+    st.caption("Collected evidence is available below. This entry cannot resume a run; submitting the question again starts fresh.")
+    if st.session_state.get("saved_incomplete_id"):
+        st.caption("Incomplete run saved on this computer.")
+    else:
+        st.warning("This incomplete run has not been saved. Download its evidence or retry saving before leaving this page.")
+        if st.button("Save incomplete run", key="retry_save_incomplete"):
+            try:
+                st.session_state["saved_incomplete_id"] = history.save(partial)
+            except HistoryError:
+                st.error("Saving failed. You can still download the collected evidence.")
+            else:
+                st.rerun()
+    a, b, c = st.columns(3)
+    a.metric("Research rounds", partial.iterations)
+    b.metric("Searches", partial.searches)
+    c.metric("Sources found", len(partial.sources))
+    for issue in partial.issues:
+        st.warning(issue)
+    st.subheader("Collected sources and evidence")
+    if not partial.sources:
+        st.info("The run stopped before any sources were collected.")
+    for source in partial.sources:
+        st.text(source.title or source.domain)
+        st.caption("Fetch status: " + source.fetch_status)
+        url = safe_source_url(source)
+        if url:
+            st.link_button("Visit page", url)
+        excerpts = [item for item in partial.evidence if item.source_id == source.id]
+        if excerpts:
+            with st.expander("Collected excerpts · " + source.id):
+                for item in excerpts:
+                    st.text(item.excerpt)
+    st.download_button("Download incomplete research (.json)", partial.json_export(),
+                       file_name="incomplete-research.json", mime="application/json")
+    # A previously completed report remains in history/session, but must not
+    # appear underneath the failed question as if it were this run's answer.
+    st.stop()
 
 result = st.session_state.get("completed_research")
 if result is not None and not st.session_state.get("saved_report_id"):
