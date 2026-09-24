@@ -790,3 +790,21 @@ def test_structured_provider_failure_is_wrapped():
         exc_info.value.__cause__
         is original_error
     )
+
+@pytest.mark.parametrize("code, expected", [(503, "LLMUnavailableError"), (502, "LLMUnavailableError"), (504, "LLMUnavailableError"), (429, "LLMRateLimitError"), (400, "LLMProviderError")])
+@pytest.mark.parametrize("structured", [False, True])
+def test_provider_status_is_safe_and_does_not_add_unbudgeted_retries(code, expected, structured):
+    original = RuntimeError("PRIVATE_PROVIDER_BODY_AND_KEY")
+    original.code = code
+    fake, models = _fake_client_with_response("unused")
+    models.generate_content.side_effect = original
+    client = GeminiLLMClient(model="test", client=fake)
+    with pytest.raises(LLMProviderError) as caught:
+        if structured:
+            client.generate_structured(system_prompt="s", user_prompt="u", response_model=ExampleResponse)
+        else:
+            client.generate_text(system_prompt="s", user_prompt="u")
+    assert type(caught.value).__name__ == expected
+    assert caught.value.__cause__ is original
+    assert "PRIVATE" not in str(caught.value)
+    assert models.generate_content.call_count == 1

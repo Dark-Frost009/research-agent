@@ -27,6 +27,14 @@ class LLMProviderError(LLMError):
     """Raised when the external LLM provider request fails."""
 
 
+class LLMUnavailableError(LLMProviderError):
+    """The provider is temporarily unavailable or overloaded."""
+
+
+class LLMRateLimitError(LLMProviderError):
+    """The provider rejected the request due to quota or rate limits."""
+
+
 class LLMResponseError(LLMError):
     """Raised when an LLM response cannot satisfy the expected contract."""
 

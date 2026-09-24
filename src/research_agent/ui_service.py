@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from research_agent.bootstrap import build_research_application, BootstrapConfigurationError
 from research_agent.config import Settings
-from research_agent.llm.client import LLMConfigurationError, LLMProviderError, LLMResponseError
+from research_agent.llm.client import LLMConfigurationError, LLMProviderError, LLMResponseError, LLMUnavailableError, LLMRateLimitError
 from research_agent.main import build_initial_state
 from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.tools.web_search import SearchConfigurationError
@@ -36,6 +36,7 @@ class CompletedResearch:
     iterations: int
     searches: int
     warning_count: int
+    issues: tuple[str, ...] = ()
 
     def citation_sources(self, citation):
         evidence = {item.id: item for item in self.evidence}
@@ -56,6 +57,8 @@ class CompletedResearch:
                 lines.append(f"  {source.title or source.domain}: {url or 'Link unavailable'}")
         if not self.report.citations:
             lines.append("No verified citations were produced.")
+        if self.issues:
+            lines += ["", "RESEARCH LIMITATIONS", *self.issues]
         return "\n".join(lines)
 
     def json_export(self) -> str:
@@ -64,6 +67,7 @@ class CompletedResearch:
             "evidence": [e.model_dump(mode="json") for e in self.evidence],
             "sources": [s.model_dump(mode="json") for s in self.sources],
             "iterations": self.iterations, "searches": self.searches,
+            "issues": list(self.issues),
         }, indent=2, ensure_ascii=False)
 
 
@@ -103,6 +107,7 @@ def run_question(question: str, on_progress: Callable[[str], None]) -> Completed
         report=final_state["final_report"], evidence=final_state["evidence"],
         sources=final_state["sources"], iterations=final_state["iteration_count"],
         searches=final_state["search_queries_used"], warning_count=len(final_state["errors"]),
+        issues=summarize_issues(final_state["errors"]),
     )
     # Do not display a report whose citations cannot be traced to source records.
     for citation in result.report.citations:
@@ -110,10 +115,35 @@ def run_question(question: str, on_progress: Callable[[str], None]) -> Completed
     return result
 
 
+def summarize_issues(errors: list[str]) -> tuple[str, ...]:
+    """Display only fixed diagnostic messages, never raw source/provider errors."""
+    # Collector errors contain URLs and exception text; only inspect the typed
+    # marker after its fixed source/sub-question prefix, not arbitrary URLs.
+    types = {error.split(": ", 1)[1].split(":", 1)[0]
+             for error in errors
+             if error.startswith("Evidence extraction failed for source ") and ": " in error}
+    messages = []
+    if "LLMUnavailableError" in types:
+        messages.append("Gemini was temporarily unavailable during evidence extraction. Try again later; this does not mean the sources lack relevant information.")
+    if "LLMRateLimitError" in types:
+        messages.append("Gemini's rate or quota limit interrupted evidence extraction. Check the provider allowance before trying again.")
+    if "LLMProviderError" in types:
+        messages.append("An AI service request failed during evidence extraction. Some source pages could not be assessed.")
+    if "EvidenceGroundingError" in types:
+        messages.append("Some proposed quotations did not match the source text exactly and were rejected.")
+    if "LLMResponseError" in types:
+        messages.append("Some evidence responses did not pass the required format checks and were rejected.")
+    return tuple(messages)
+
+
 def friendly_error(exc: Exception) -> str:
     """Do not echo provider responses, configuration values, or credentials."""
     if isinstance(exc, (BootstrapConfigurationError, LLMConfigurationError, SearchConfigurationError, ValidationError)):
         return "The research service needs configuration. Check the provider settings and API keys in the project's .env file."
+    if isinstance(exc, LLMUnavailableError):
+        return "Gemini is temporarily unavailable or overloaded. Try again later. No new report was released."
+    if isinstance(exc, LLMRateLimitError):
+        return "Gemini's rate or quota limit was reached. Check your allowance before trying again. No new report was released."
     if isinstance(exc, LLMProviderError):
         return "The AI service could not complete the request. Check your connection, provider availability, and API allowance, then try again."
     if isinstance(exc, LLMResponseError):

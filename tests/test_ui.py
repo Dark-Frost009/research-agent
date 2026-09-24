@@ -136,3 +136,37 @@ def test_adapter_rejects_broken_citation_links(monkeypatch):
                         SimpleNamespace(graph=BrokenGraph(), context=_isolated_context()))
     with pytest.raises(KeyError):
         service.run_question("Question", lambda message: None)
+
+
+def test_extraction_diagnostics_are_safe_and_exported(monkeypatch):
+    errors = [
+        "Evidence extraction failed for source s and sub-question q: LLMUnavailableError: PRIVATE",
+        "Evidence extraction failed for source s and sub-question q: EvidenceGroundingError: PRIVATE",
+    ]
+    issues = service.summarize_issues(errors)
+    assert len(issues) == 2
+    assert "temporarily unavailable" in issues[0]
+    assert "PRIVATE" not in repr(issues)
+    from dataclasses import replace
+    result = replace(completed(), issues=issues, warning_count=2)
+    assert issues[0] in result.text_export()
+    assert json.loads(result.json_export())["issues"] == list(issues)
+    monkeypatch.setattr(service, "run_question", lambda *args: result)
+    app = AppTest.from_file(APP).run()
+    app.text_area[0].set_value("Question")
+    app.button[0].click().run()
+    assert not app.exception
+    assert any("temporarily unavailable" in warning.value for warning in app.warning)
+
+
+def test_provider_outage_is_not_presented_as_insufficient_evidence(monkeypatch):
+    from research_agent.llm.client import LLMUnavailableError
+    def fail(*args):
+        raise LLMUnavailableError("PRIVATE")
+    monkeypatch.setattr(service, "run_question", fail)
+    app = AppTest.from_file(APP).run()
+    app.text_area[0].set_value("Question")
+    app.button[0].click().run()
+    assert not app.exception
+    assert "temporarily unavailable" in app.error[0].value
+    assert "PRIVATE" not in app.error[0].value

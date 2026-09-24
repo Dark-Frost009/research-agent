@@ -50,6 +50,8 @@ if result is not None:
         st.warning("This run did not produce an answer with verified citations.")
     if result.warning_count:
         st.info("Some research steps could not complete. The report uses the evidence that was available.")
+    for issue in getattr(result, "issues", ()):
+        st.warning(issue)
     report_tab, sources_tab = st.tabs(["Report", "Sources & evidence"])
     with report_tab:
         # Provider text is plain text: it cannot embed remote images or HTML.

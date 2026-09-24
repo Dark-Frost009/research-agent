@@ -18,6 +18,8 @@ from pydantic import BaseModel, ValidationError
 from research_agent.llm.client import (
     LLMConfigurationError,
     LLMProviderError,
+    LLMUnavailableError,
+    LLMRateLimitError,
     LLMResponseError,
 )
 
@@ -83,9 +85,7 @@ class GeminiLLMClient:
                 ),
             )
         except Exception as exc:
-            raise LLMProviderError(
-                "Gemini text generation request failed."
-            ) from exc
+            raise self._provider_error(exc, "text") from exc
 
         return self._extract_response_text(
             response
@@ -130,9 +130,7 @@ class GeminiLLMClient:
                 ),
             )
         except Exception as exc:
-            raise LLMProviderError(
-                "Gemini structured generation request failed."
-            ) from exc
+            raise self._provider_error(exc, "structured") from exc
 
         response_text = self._extract_response_text(
             response
@@ -151,6 +149,16 @@ class GeminiLLMClient:
                 "Gemini returned a response that did not satisfy "
                 "the expected structured schema."
             ) from exc
+
+    @staticmethod
+    def _provider_error(exc: Exception, operation: str) -> LLMProviderError:
+        # Preserve useful categories without exposing provider bodies or keys.
+        code = getattr(exc, "code", None)
+        if code in (502, 503, 504):
+            return LLMUnavailableError("Gemini is temporarily unavailable. Try again later.")
+        if code == 429:
+            return LLMRateLimitError("Gemini rate or quota limit reached. Check your allowance before retrying.")
+        return LLMProviderError(f"Gemini {operation} generation request failed.")
 
     @staticmethod
     def _validate_prompts(
