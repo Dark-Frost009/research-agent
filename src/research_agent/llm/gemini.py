@@ -12,7 +12,9 @@ from __future__ import annotations
 from typing import Any, TypeVar
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
+import httpx
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
 from pydantic import BaseModel, ValidationError
 
 from research_agent.llm.client import (
@@ -25,6 +27,10 @@ from research_agent.llm.client import (
 
 
 T = TypeVar("T", bound=BaseModel)
+
+# Catch known remote/transport failures only. Unexpected SDK or application
+# programming errors must retain their original type and traceback.
+_PROVIDER_ERRORS = (errors.APIError, httpx.TransportError, RequestsConnectionError, RequestsTimeout)
 
 
 class GeminiLLMClient:
@@ -59,7 +65,7 @@ class GeminiLLMClient:
             self._client = genai.Client(
                 api_key=api_key.strip(),
             )
-        except Exception as exc:
+        except ValueError as exc:
             raise LLMConfigurationError(
                 "Failed to initialize the Gemini client."
             ) from exc
@@ -76,15 +82,16 @@ class GeminiLLMClient:
             user_prompt,
         )
 
+        config = types.GenerateContentConfig(system_instruction=clean_system_prompt)
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=clean_user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=clean_system_prompt,
-                ),
+                config=config,
             )
-        except Exception as exc:
+        except errors.UnknownApiResponseError as exc:
+            raise LLMResponseError("Gemini returned an unreadable response.") from exc
+        except _PROVIDER_ERRORS as exc:
             raise self._provider_error(exc, "text") from exc
 
         return self._extract_response_text(
@@ -119,17 +126,20 @@ class GeminiLLMClient:
             response_model.model_json_schema()
         )
 
+        config = types.GenerateContentConfig(
+            system_instruction=clean_system_prompt,
+            response_mime_type="application/json",
+            response_json_schema=response_json_schema,
+        )
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=clean_user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=clean_system_prompt,
-                    response_mime_type="application/json",
-                    response_json_schema=response_json_schema,
-                ),
+                config=config,
             )
-        except Exception as exc:
+        except errors.UnknownApiResponseError as exc:
+            raise LLMResponseError("Gemini returned an unreadable response.") from exc
+        except _PROVIDER_ERRORS as exc:
             raise self._provider_error(exc, "structured") from exc
 
         response_text = self._extract_response_text(
@@ -211,7 +221,7 @@ class GeminiLLMClient:
         """Extract and validate text from a Gemini SDK response."""
         try:
             text = response.text
-        except Exception as exc:
+        except (AttributeError, ValueError) as exc:
             raise LLMResponseError(
                 "Gemini response did not expose usable text."
             ) from exc

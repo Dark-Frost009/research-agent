@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from research_agent.graph.execution import research_run_config
 
 from research_agent.bootstrap import (
     build_research_application,
@@ -68,6 +69,7 @@ def run_research(
             question
         ),
         context=application.context,
+        config=research_run_config(application.context.budget_policy.limits),
     )
 
     report = result.get(

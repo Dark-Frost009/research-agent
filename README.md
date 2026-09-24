@@ -1005,6 +1005,20 @@ External provider availability and rate limits can affect live runs
 
 # Design Principles
 
+Both the CLI and Streamlit use the shared graph execution configuration in
+`graph/execution.py`. Its step limit scales with the configured maximum research
+iterations and leaves room for finalization; provider budgets remain enforced
+separately by the graph. Offline integration tests exercise both entry points
+through two and eight research rounds.
+
+The Gemini adapter translates known SDK API errors and HTTP transport failures
+into safe provider messages. SDK errors with status 429 indicate quota/rate limits;
+502, 503, and 504 indicate temporary unavailability. Tests construct actual SDK
+exception classes without making requests. Invalid SDK response JSON is classified
+as a response error. Unexpected programming errors retain their original type
+at the adapter boundary instead of being relabeled as provider outages; the web
+interface still presents safe messages. No adapter retries are added.
+
 The project emphasizes:
 
 ```text

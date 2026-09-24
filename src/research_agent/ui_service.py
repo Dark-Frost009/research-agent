@@ -14,6 +14,7 @@ from research_agent.main import build_initial_state
 from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.tools.web_search import SearchConfigurationError
 from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
+from research_agent.graph.execution import research_run_config
 from pydantic import ValidationError
 
 
@@ -96,7 +97,7 @@ def run_question(question: str, on_progress: Callable[[str], None]) -> Completed
     try:
         for mode, payload in application.graph.stream(
             initial, context=application.context, stream_mode=["updates", "values"],
-            config={"recursion_limit": max(100, application.context.budget_policy.limits.max_research_iterations * 20 + 10)},
+            config=research_run_config(application.context.budget_policy.limits),
         ):
             if mode == "updates":
                 for node in payload:

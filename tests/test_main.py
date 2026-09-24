@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from test_production_graph import _isolated_context
 
 import research_agent.main as main_module
 from research_agent.models.schemas import (
@@ -111,15 +112,17 @@ def test_run_research_invokes_graph_with_context(
             state,
             *,
             context,
+            config,
         ):
             seen["state"] = state
             seen["context"] = context
+            seen["config"] = config
 
             return {
                 "final_report": report
             }
 
-    fake_context = object()
+    fake_context = _isolated_context()
 
     application = SimpleNamespace(
         graph=FakeGraph(),
@@ -137,6 +140,7 @@ def test_run_research_invokes_graph_with_context(
     )
 
     assert result is report
+    assert seen["config"]["recursion_limit"] >= 28
 
     assert seen["context"] is (
         fake_context
@@ -170,12 +174,13 @@ def test_run_research_requires_valid_final_report(
             state,
             *,
             context,
+            config,
         ):
             return graph_result
 
     application = SimpleNamespace(
         graph=FakeGraph(),
-        context=object(),
+        context=_isolated_context(),
     )
 
     monkeypatch.setattr(

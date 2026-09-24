@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from google.genai import errors
 from pydantic import BaseModel, ConfigDict
 
 from research_agent.llm.client import (
@@ -167,7 +168,7 @@ def test_api_key_is_stripped_before_sdk_initialization(
 def test_sdk_initialization_failure_is_wrapped(
     monkeypatch,
 ):
-    original_error = RuntimeError(
+    original_error = ValueError(
         "SDK initialization failed"
     )
 
@@ -399,9 +400,7 @@ def test_generate_text_sends_expected_request(
 
 
 def test_text_provider_failure_is_wrapped():
-    original_error = RuntimeError(
-        "provider failed"
-    )
+    original_error = errors.ServerError(500, {"error": {"message": "provider failed"}})
 
     models = Mock()
 
@@ -758,9 +757,7 @@ def test_invalid_structured_response_is_wrapped(
 
 
 def test_structured_provider_failure_is_wrapped():
-    original_error = RuntimeError(
-        "structured provider failed"
-    )
+    original_error = errors.ServerError(500, {"error": {"message": "structured provider failed"}})
 
     models = Mock()
 
@@ -794,8 +791,8 @@ def test_structured_provider_failure_is_wrapped():
 @pytest.mark.parametrize("code, expected", [(503, "LLMUnavailableError"), (502, "LLMUnavailableError"), (504, "LLMUnavailableError"), (429, "LLMRateLimitError"), (400, "LLMProviderError")])
 @pytest.mark.parametrize("structured", [False, True])
 def test_provider_status_is_safe_and_does_not_add_unbudgeted_retries(code, expected, structured):
-    original = RuntimeError("PRIVATE_PROVIDER_BODY_AND_KEY")
-    original.code = code
+    error_class = errors.ServerError if code >= 500 else errors.ClientError
+    original = error_class(code, {"error": {"message": "PRIVATE_PROVIDER_BODY_AND_KEY"}})
     fake, models = _fake_client_with_response("unused")
     models.generate_content.side_effect = original
     client = GeminiLLMClient(model="test", client=fake)
@@ -808,3 +805,85 @@ def test_provider_status_is_safe_and_does_not_add_unbudgeted_retries(code, expec
     assert caught.value.__cause__ is original
     assert "PRIVATE" not in str(caught.value)
     assert models.generate_content.call_count == 1
+
+
+def _generate(client, structured):
+    if structured:
+        return client.generate_structured(system_prompt="s", user_prompt="u", response_model=ExampleResponse)
+    return client.generate_text(system_prompt="s", user_prompt="u")
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("failure_type", [TypeError, AttributeError, RuntimeError])
+def test_programming_errors_are_not_mislabeled_as_provider_failures(structured, failure_type):
+    original = failure_type("Programming defect")
+    fake, models = _fake_client_with_response("unused")
+    models.generate_content.side_effect = original
+    with pytest.raises(failure_type) as caught:
+        _generate(GeminiLLMClient(model="test", client=fake), structured)
+    assert caught.value is original
+    assert models.generate_content.call_count == 1
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_config_construction_error_propagates_before_provider_call(monkeypatch, structured):
+    original = TypeError("Bad config construction")
+    monkeypatch.setattr("research_agent.llm.gemini.types.GenerateContentConfig", Mock(side_effect=original))
+    fake, models = _fake_client_with_response("unused")
+    with pytest.raises(TypeError) as caught:
+        _generate(GeminiLLMClient(model="test", client=fake), structured)
+    assert caught.value is original
+    models.generate_content.assert_not_called()
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("transport", ["httpx_timeout", "httpx_connect", "requests_timeout", "requests_connect"])
+def test_known_transport_failures_remain_safe(structured, transport):
+    import httpx
+    import requests
+    failures = {
+        "httpx_timeout": httpx.ReadTimeout,
+        "httpx_connect": httpx.ConnectError,
+        "requests_timeout": requests.exceptions.Timeout,
+        "requests_connect": requests.exceptions.ConnectionError,
+    }
+    original = failures[transport]("PRIVATE transport details")
+    fake, models = _fake_client_with_response("unused")
+    models.generate_content.side_effect = original
+    with pytest.raises(LLMProviderError) as caught:
+        _generate(GeminiLLMClient(model="test", client=fake), structured)
+    assert caught.value.__cause__ is original
+    assert "PRIVATE" not in str(caught.value)
+    assert models.generate_content.call_count == 1
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_sdk_unreadable_response_is_a_response_error(structured):
+    original = errors.UnknownApiResponseError("PRIVATE response")
+    fake, models = _fake_client_with_response("unused")
+    models.generate_content.side_effect = original
+    with pytest.raises(LLMResponseError) as caught:
+        _generate(GeminiLLMClient(model="test", client=fake), structured)
+    assert caught.value.__cause__ is original
+    assert "PRIVATE" not in str(caught.value)
+
+
+def test_constructor_programming_error_is_not_mislabeled(monkeypatch):
+    original = RuntimeError("Unexpected SDK bug")
+    monkeypatch.setattr("research_agent.llm.gemini.genai.Client", Mock(side_effect=original))
+    with pytest.raises(RuntimeError) as caught:
+        GeminiLLMClient(model="test", api_key="fake-offline-key")
+    assert caught.value is original
+
+
+def test_unexpected_response_accessor_error_is_not_mislabeled():
+    original = RuntimeError("Unexpected SDK bug")
+    class BrokenResponse:
+        @property
+        def text(self):
+            raise original
+    fake, models = _fake_client_with_response("unused")
+    models.generate_content.return_value = BrokenResponse()
+    with pytest.raises(RuntimeError) as caught:
+        _generate(GeminiLLMClient(model="test", client=fake), False)
+    assert caught.value is original
