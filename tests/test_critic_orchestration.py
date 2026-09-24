@@ -725,7 +725,8 @@ def test_execute_critique_returns_durable_result_delta() -> None:
     )
 
     assert update == {
-        "critique": expected
+        "critique": expected,
+        "research_stop_reason": "continue_research",
     }
 
     assert len(

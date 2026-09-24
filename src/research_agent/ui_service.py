@@ -16,6 +16,7 @@ from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.tools.web_search import SearchConfigurationError
 from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
 from research_agent.graph.execution import research_run_config
+from research_agent.run_summary import RunSummary, summarize_run
 from pydantic import ValidationError
 
 
@@ -41,6 +42,7 @@ class CompletedResearch:
     warning_count: int
     issues: tuple[str, ...] = ()
     depth: ResearchDepth | None = None
+    summary: RunSummary | None = None
 
     def citation_sources(self, citation):
         evidence = {item.id: item for item in self.evidence}
@@ -65,6 +67,8 @@ class CompletedResearch:
             lines += ["", "RESEARCH LIMITATIONS", *self.issues]
         if getattr(self, "depth", None) is not None:
             lines += ["", "RESEARCH DEPTH", self.depth.summary]
+        if getattr(self, "summary", None) is not None:
+            lines += ["", "RUN SUMMARY", self.summary.text_export()]
         return "\n".join(lines)
 
     def json_export(self) -> str:
@@ -75,6 +79,7 @@ class CompletedResearch:
             "iterations": self.iterations, "searches": self.searches,
             "issues": list(self.issues),
             "depth": self.depth.model_dump() if getattr(self, "depth", None) is not None else None,
+            "summary": self.summary.model_dump() if getattr(self, "summary", None) is not None else None,
         }, indent=2, ensure_ascii=False)
 
 
@@ -138,6 +143,7 @@ def run_question(question: str, on_progress: Callable[[str], None], *, depth: De
             warning_count=len(state.get("errors", [])),
             issues=summarize_issues(state.get("errors", [])),
             depth=selected_depth,
+            summary=summarize_run(state, application.context.budget_policy.limits, error=reason),
         ).model_copy(deep=True)
         raise ResearchInterrupted(partial) from exc
     if final_state is None or not isinstance(final_state.get("final_report"), ResearchReport):
@@ -148,6 +154,7 @@ def run_question(question: str, on_progress: Callable[[str], None], *, depth: De
         searches=final_state["search_queries_used"], warning_count=len(final_state["errors"]),
         issues=summarize_issues(final_state["errors"]),
         depth=selected_depth,
+        summary=summarize_run(final_state, application.context.budget_policy.limits),
     )
     # Do not display a report whose citations cannot be traced to source records.
     for citation in result.report.citations:

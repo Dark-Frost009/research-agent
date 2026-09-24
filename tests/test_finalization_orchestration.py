@@ -494,6 +494,7 @@ def test_execute_finalization_returns_draft_and_real_citations() -> None:
         "draft_content": (
             "Evidence sentence 0."
         ),
+        "finalization_outcome": "verified",
         "citations": [
             citation
         ],

@@ -28,6 +28,24 @@ def unsaved_entries():
 
 
 st.set_page_config(page_title="Research Agent", page_icon="🔎", layout="centered")
+
+
+def render_run_summary(result):
+    st.subheader("Run summary")
+    summary = getattr(result, "summary", None)
+    if summary is None:
+        st.caption("A detailed run summary was not recorded for this older result.")
+        a, b, c = st.columns(3)
+        a.metric("Research rounds", result.iterations)
+        b.metric("Searches", result.searches)
+        c.metric("Sources found", len(result.sources))
+        return
+    st.text(summary.stop_message)
+    st.text(summary.outcome_message)
+    st.table(summary.rows())
+    st.caption("Budget used counts committed reservations, including failed attempts and reserved final verification calls. These are not provider billing or token totals.")
+
+
 st.caption("RESEARCH AGENT  /  YOUR RESEARCH WORKSPACE")
 st.title("Ask a question. Follow the evidence.")
 st.write("Explore the web, compare evidence, and get a report checked against its sources.")
@@ -171,10 +189,7 @@ if partial is not None:
                 st.error("Saving failed. You can still download the collected evidence.")
             else:
                 st.rerun()
-    a, b, c = st.columns(3)
-    a.metric("Research rounds", partial.iterations)
-    b.metric("Searches", partial.searches)
-    c.metric("Sources found", len(partial.sources))
+    render_run_summary(partial)
     for issue in partial.issues:
         st.warning(issue)
     st.subheader("Collected sources and evidence")
@@ -220,10 +235,7 @@ if result is not None:
     st.text(result.report.question)
     if getattr(result, "depth", None) is not None:
         st.caption("This run: " + result.depth.summary)
-    a, b, c = st.columns(3)
-    a.metric("Research rounds", result.iterations)
-    b.metric("Searches", result.searches)
-    c.metric("Sources found", len(result.sources))
+    render_run_summary(result)
     if not result.report.citations:
         st.warning("This run did not produce an answer with verified citations.")
     if result.warning_count:

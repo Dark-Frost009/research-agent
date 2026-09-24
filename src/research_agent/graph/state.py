@@ -29,7 +29,7 @@ this module - only the state schema and its deterministic reducers.
 from __future__ import annotations
 
 import operator
-from typing import Annotated, TypedDict
+from typing import Annotated, TypedDict, NotRequired
 
 from research_agent.models.schemas import (
     Citation,
@@ -243,6 +243,10 @@ class ResearchState(TypedDict):
     draft_content: str | None
     citations: list[Citation]
     critique: CritiqueResult | None
+    # Diagnostic codes captured at the decision point, before finalization
+    # spends its reserve. Optional for older callers and snapshots.
+    research_stop_reason: NotRequired[str]
+    finalization_outcome: NotRequired[str]
 
     # Whole-run usage counters.
     #

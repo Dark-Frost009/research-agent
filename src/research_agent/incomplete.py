@@ -6,6 +6,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 from research_agent.models.schemas import Evidence, Source
 from research_agent.depth import ResearchDepth
+from research_agent.run_summary import RunSummary
 
 
 STOP_REASONS = {
@@ -32,9 +33,12 @@ class IncompleteResearch(BaseModel):
     warning_count: int = Field(ge=0)
     issues: tuple[str, ...] = ()
     depth: ResearchDepth | None = None
+    summary: RunSummary | None = None
 
     @model_validator(mode="after")
     def validate_links(self):
+        if self.summary is not None and self.summary.outcome != "incomplete":
+            raise ValueError("An incomplete run cannot claim a completed outcome.")
         source_ids = {source.id for source in self.sources}
         if len(source_ids) != len(self.sources):
             raise ValueError("Duplicate source identifiers.")

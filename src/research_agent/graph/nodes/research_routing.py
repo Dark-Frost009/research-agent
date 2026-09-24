@@ -184,13 +184,13 @@ def _current_iteration_count(
     return iteration_count
 
 
-def route_after_critique(
+def research_decision(
     state: ResearchState,
     runtime: Runtime[ResearchGraphContext],
-) -> ResearchRoute:
-    """Choose another research iteration or finalization.
+) -> str:
+    """Return a stable reason code for the current routing decision.
 
-    This function is suitable for a LangGraph conditional edge.
+    The router translates this code into the corresponding conditional edge.
 
     It does not reserve anything. All BudgetPolicy calls below are pure
     feasibility checks against the same durable BudgetUsage snapshot.
@@ -218,12 +218,14 @@ def route_after_critique(
 
     # A sufficient critique always proceeds directly to finalization.
     if critique.sufficient:
-        return "finalize"
+        return "sufficient"
 
     # Critique may deliberately return no follow-ups when optional critique
     # budget was unavailable. Do not invent research work in that case.
     if not critique.follow_up_questions:
-        return "finalize"
+        remaining = context.budget_policy.authorize_llm_calls(
+            usage=budget_usage_from_state(state), requested=1, purpose="optional_research")
+        return "ai_limit" if remaining.authorized < 1 else "no_followups"
 
     # Before reserving another iteration, prove that at least one critique
     # follow-up is genuinely new.
@@ -247,7 +249,7 @@ def route_after_critique(
     )
 
     if not viable_follow_ups:
-        return "finalize"
+        return "no_new_followups"
 
     usage = budget_usage_from_state(
         state
@@ -272,7 +274,7 @@ def route_after_critique(
         iteration_authorization.authorized
         < 1
     ):
-        return "finalize"
+        return "round_limit"
 
     search_authorization = (
         context.budget_policy.authorize_search_queries(
@@ -285,7 +287,7 @@ def route_after_critique(
         search_authorization.authorized
         < 1
     ):
-        return "finalize"
+        return "search_limit"
 
     source_authorization = (
         context.budget_policy.authorize_new_sources(
@@ -298,7 +300,7 @@ def route_after_critique(
         source_authorization.authorized
         < 1
     ):
-        return "finalize"
+        return "source_limit"
 
     fetch_authorization = (
         context.budget_policy.authorize_source_fetches(
@@ -311,7 +313,7 @@ def route_after_critique(
         fetch_authorization.authorized
         < 1
     ):
-        return "finalize"
+        return "fetch_limit"
 
     # Evidence extraction requires at least one optional-research LLM call.
     #
@@ -330,6 +332,11 @@ def route_after_critique(
         llm_authorization.authorized
         < 1
     ):
-        return "finalize"
+        return "ai_limit"
 
     return "continue_research"
+
+
+def route_after_critique(state: ResearchState, runtime: Runtime[ResearchGraphContext]) -> ResearchRoute:
+    """Route using the same pure decision recorded for the user-facing summary."""
+    return "continue_research" if research_decision(state, runtime) == "continue_research" else "finalize"

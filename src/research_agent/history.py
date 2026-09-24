@@ -14,6 +14,7 @@ from research_agent.models.schemas import Evidence, ResearchReport, Source
 from research_agent.ui_service import CompletedResearch
 from research_agent.incomplete import IncompleteResearch
 from research_agent.depth import ResearchDepth
+from research_agent.run_summary import RunSummary
 
 
 class HistoryError(RuntimeError):
@@ -31,9 +32,12 @@ class _Snapshot(BaseModel):
     warning_count: int = Field(ge=0)
     issues: tuple[str, ...] = ()
     depth: ResearchDepth | None = None
+    summary: RunSummary | None = None
 
     @model_validator(mode="after")
     def validate_links(self):
+        if self.summary is not None and self.summary.outcome == "incomplete":
+            raise ValueError("A completed report cannot claim an incomplete outcome.")
         for items in (self.sources, self.evidence, self.report.citations):
             if len({item.id for item in items}) != len(items):
                 raise ValueError("Duplicate saved identifiers.")
@@ -51,13 +55,13 @@ class _Snapshot(BaseModel):
         return cls(report=result.report, evidence=result.evidence, sources=result.sources,
                    iterations=result.iterations, searches=result.searches,
                    warning_count=result.warning_count, issues=getattr(result, "issues", ()),
-                   depth=getattr(result, "depth", None))
+                   depth=getattr(result, "depth", None), summary=getattr(result, "summary", None))
 
     def to_result(self) -> CompletedResearch:
         return CompletedResearch(report=self.report, evidence=self.evidence,
                                  sources=self.sources, iterations=self.iterations,
                                  searches=self.searches, warning_count=self.warning_count,
-                                 issues=self.issues, depth=self.depth)
+                                 issues=self.issues, depth=self.depth, summary=self.summary)
 
 
 @dataclass(frozen=True)

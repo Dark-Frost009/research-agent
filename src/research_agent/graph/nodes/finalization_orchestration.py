@@ -239,9 +239,11 @@ def execute_finalization(
     # provider side effect can occur.
     context.workspace.finalization_call = None
 
+    rejected = False
     try:
         result = context.synthesizer.synthesize(call)
     except (SynthesisValidationError, SynthesisVerificationError):
+        rejected = True
         # Discard the entire rejected answer and all verifier diagnostics.
         # Keep the committed reservation; this path performs no further calls.
         # Provider failures and programming errors remain operational failures.
@@ -290,6 +292,12 @@ def execute_finalization(
 
     return {
         "draft_content": result.content,
+        "finalization_outcome": (
+            "verification_rejected" if rejected else
+            "no_evidence" if not call.requires_llm else
+            "finalization_budget" if not call.fully_authorized else
+            "verified" if result.citations else "no_verified_answer"
+        ),
         "citations": list(
             result.citations
         ),

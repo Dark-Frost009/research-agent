@@ -34,6 +34,7 @@ checkpoint/reservation semantics.
 from __future__ import annotations
 
 from langgraph.runtime import Runtime
+from research_agent.graph.nodes.research_routing import research_decision
 
 from research_agent.graph.budget import (
     BudgetAuthorization,
@@ -257,7 +258,7 @@ def execute_critique(
     runtime: Runtime[ResearchGraphContext],
 ) -> dict[
     str,
-    CritiqueResult,
+    CritiqueResult | str,
 ]:
     """Execute one previously prepared evidence critique.
 
@@ -376,5 +377,6 @@ def execute_critique(
         )
 
     return {
-        "critique": result
+        "critique": result,
+        "research_stop_reason": research_decision({**state, "critique": result}, runtime),
     }

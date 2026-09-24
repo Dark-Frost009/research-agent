@@ -1140,6 +1140,26 @@ runs continue to use their configured budgets directly.
 
 ## Saved research history
 
+### Run summaries
+
+New web-interface runs retain a **Run summary** in history and exports, including
+incomplete runs. The table compares committed research-round, search, source,
+page-read, and AI-call budgets against the actual limits for that run. These are
+reservation counters, not provider billing totals: failed attempts consume budget,
+and finalization reserves both calls before either executes. A failure during the
+first finalization call can therefore still account for two reserved AI calls.
+
+The graph records why research stopped before finalization spends its reserve:
+sufficient evidence, no further/new questions, or the first budget blocking another
+round. The summary separately states whether finalization produced verified
+citations, found no evidence, lacked finalization budget, or discarded a rejected
+answer. An incomplete run records its safe failure category instead. No rejected
+drafts, raw provider errors, or secrets are added to summaries.
+
+Older saved results still open normally and show that detailed summaries were not
+recorded. Missing AI/page-read totals and stop reasons are never reconstructed
+from current settings or guessed from old report text.
+
 Completed web-interface runs are automatically saved to
 `.local/research_history.sqlite` inside this project. The **Saved research**
 sidebar lets you search by question and open any saved report, including its
