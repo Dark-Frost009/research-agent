@@ -1,6 +1,7 @@
 """Run the fixed offline suite in a separate process and summarize its JUnit report."""
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -9,6 +10,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 import streamlit as st
+from research_agent.evaluation_history import EvaluationHistory, EvaluationHistoryError, compare_evaluations
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,7 +59,8 @@ def summarize_report(cases, xml, returncode):
         elif len(matches) > 1:
             status, detail = 'Error', 'Duplicate scenario results in evaluation report.'
         rows.append(dict(scenario=case['id'], category=category(case), status=status,
-                         expected=case['expected'], actual=actual, detail=detail))
+                         expected=case['expected'], actual=actual, detail=detail,
+                         fixture_hash=hashlib.sha256(json.dumps(case, sort_keys=True, ensure_ascii=False).encode('utf-8')).hexdigest()))
     checks = []
     for node in tests:
         if id(node) not in used:
@@ -95,19 +98,77 @@ def run_evaluations():
 def render_evaluation_dashboard():
     st.header('Offline evaluation dashboard')
     st.caption('Runs the bundled scenarios with scripted providers. This checks safeguards, not live Gemini accuracy or resistance to attacks. No research history is read or changed.')
-    if st.button('Run offline evaluations', key='run_offline_evaluations'):
+    history = EvaluationHistory(ROOT / '.local' / 'evaluation_history.sqlite')
+    unsaved = st.session_state.get('offline_evaluation_report') is not None and not st.session_state.get('saved_evaluation_id')
+    requested = st.button('Run offline evaluations', key='run_offline_evaluations')
+    if requested and unsaved:
+        st.warning('Save the current evaluation below before starting another run.')
+    elif requested:
         st.session_state.pop('offline_evaluation_report', None)
+        st.session_state.pop('saved_evaluation_id', None)
         try:
             with st.spinner('Running offline scenarios…'):
                 st.session_state['offline_evaluation_report'] = run_evaluations()
+            try:
+                st.session_state['saved_evaluation_id'] = history.save(st.session_state['offline_evaluation_report'])
+            except EvaluationHistoryError as exc:
+                st.warning(str(exc))
         except subprocess.TimeoutExpired:
             st.error('Evaluation stopped after 90 seconds. No completed report is available; try again after checking the local test setup.')
         except (OSError, ValueError, ET.ParseError, RuntimeError):
             st.error('Could not complete the evaluation report. Check that the project fixtures, tests, and pytest are installed, then try again.')
+    try:
+        saved_runs = history.list_runs()
+    except EvaluationHistoryError as exc:
+        st.warning(str(exc))
+        saved_runs = []
+    labels = {key: timestamp[:19].replace('T', ' ') + ' UTC · ' + key[:6] for key, timestamp in saved_runs}
+    if labels:
+        with st.expander('Saved evaluations'):
+            selected = st.selectbox('Saved evaluation', list(labels), format_func=labels.__getitem__, key='evaluation_selection')
+            if st.button('Open saved evaluation', key='open_evaluation'):
+                if st.session_state.get('offline_evaluation_report') is not None and not st.session_state.get('saved_evaluation_id'):
+                    st.warning('Save the current evaluation before opening another.')
+                else:
+                    try:
+                        st.session_state['offline_evaluation_report'] = history.load(selected)
+                        st.session_state['saved_evaluation_id'] = selected
+                    except EvaluationHistoryError as exc:
+                        st.warning(str(exc))
     report = st.session_state.get('offline_evaluation_report')
     if report is None:
         st.info('Run the offline evaluations to see current results. Nothing runs automatically.')
         return
+    if not st.session_state.get('saved_evaluation_id'):
+        st.warning('This evaluation has not been saved. Download it or retry saving before closing the page.')
+        if st.button('Save evaluation', key='retry_save_evaluation'):
+            try:
+                st.session_state['saved_evaluation_id'] = history.save(report)
+                st.rerun()
+            except EvaluationHistoryError as exc:
+                st.warning(str(exc))
+    baselines = [key for key in labels if key != st.session_state.get('saved_evaluation_id')]
+    if baselines:
+        baseline_id = st.selectbox('Compare with saved baseline', baselines, index=None,
+                                   format_func=labels.__getitem__, key='evaluation_baseline')
+        if baseline_id:
+            try:
+                baseline = history.load(baseline_id)
+                changes = compare_evaluations(baseline, report)
+                st.subheader('Changes from baseline')
+                st.caption('Only identical scenario fixtures are classified as regressions. Changed or missing fixtures are shown separately. Baseline: '
+                           + baseline['generated_at'] + '; current: ' + report['generated_at'])
+                st.text(f"{sum(row['change'] == 'Regression' for row in changes)} regressions; "
+                        f"{sum(row['change'] == 'Lost coverage' for row in changes)} scenarios lost coverage.")
+                st.table(changes)
+                st.text(f"Suite status: {'passed' if baseline['success'] else 'not passed'} → {'passed' if report['success'] else 'not passed'}")
+                st.table([dict(run=label, **check) for label, snapshot in [('Baseline', baseline), ('Current', report)]
+                          for check in snapshot['suite_checks']])
+                st.download_button('Download evaluation changes (.json)', json.dumps(dict(
+                    baseline=baseline['generated_at'], current=report['generated_at'], changes=changes), indent=2),
+                    file_name='evaluation-changes.json', mime='application/json', key='download_evaluation_changes')
+            except EvaluationHistoryError as exc:
+                st.warning(str(exc))
     st.caption('Snapshot from ' + report['generated_at'] + '. Run again after code or fixture changes.')
     (st.success if report['success'] else st.warning)(f"{report['passed']} of {report['total']} scenarios passed."
         + (' All suite checks passed.' if report['success'] else 'Review failures, missing results, and suite checks below.'))

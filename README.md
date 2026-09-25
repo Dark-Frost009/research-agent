@@ -1158,8 +1158,15 @@ runs continue to use their configured budgets directly.
 Turn on **Offline evaluation dashboard** in Streamlit and click **Run offline
 evaluations** to run the bundled suite in a separate process. The dashboard shows
 each scenario's result, failures grouped by category, and a downloadable JSON
-summary. It does not access research history or replace unsaved work. Results are
-session snapshots; rerun after code changes. The local checkout must include the
+summary. It does not access research history or replace unsaved work. Completed
+evaluation reports are automatically saved separately in `.local/evaluation_history.sqlite`.
+Open a saved evaluation after restarting, or select a baseline to compare results.
+Identical scenario fixtures that go from passing to failed/error are regressions;
+skipped or missing results are lost coverage. Changed, added, removed, or older
+unidentified fixtures are labeled separately. Suite-level status is also shown.
+You can download comparison changes. Failed saves keep the current summary available
+to download and retry saving; reruns do not duplicate saved entries. Rerun after code
+changes to evaluate the current code. The local checkout must include the
 tests, evaluation fixtures, and pytest (`pip install -e ".[dev]"`). Runs have a
 90-second timeout and use temporary reports, with no provider calls.
 

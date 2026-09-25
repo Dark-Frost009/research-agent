@@ -72,7 +72,8 @@ def test_runner_is_fixed_and_uses_temporary_report(tmp_path, monkeypatch):
     assert not report_paths[0].exists()
 
 
-def test_dashboard_isolated_no_auto_run_and_preserves_work(monkeypatch):
+def test_dashboard_isolated_no_auto_run_and_preserves_work(monkeypatch, tmp_path):
+    monkeypatch.setattr(dashboard, 'ROOT', tmp_path)
     def forbidden(*args, **kwargs):
         pytest.fail('Dashboard must not access providers, settings, or research history')
     monkeypatch.setattr(history_module, 'get_history_store', forbidden)
