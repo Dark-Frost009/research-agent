@@ -10,6 +10,7 @@ from research_agent.ui_service import run_question, friendly_error, safe_source_
 from research_agent.depth import DEPTH_NAMES
 from research_agent.history import get_history_store, HistoryError
 from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
+from research_agent.backup_ui import render_backup_controls
 
 def unsaved_entries():
     """Include legacy sessions and hidden results, not just failed-save flags."""
@@ -144,6 +145,7 @@ with st.sidebar:
                     st.session_state["history_save_failed"] = False
     else:
         st.caption("No matching saved reports." if search.strip() else "Your completed reports will appear here.")
+    render_backup_controls(history)
 
 pending = unsaved_entries()
 if pending:

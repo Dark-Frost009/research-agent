@@ -1155,6 +1155,27 @@ runs continue to use their configured budgets directly.
 
 ## Saved research history
 
+### Backup and restore
+
+In the sidebar, expand **History backup & restore**, choose **Prepare history
+backup**, then download the JSON file. The snapshot includes all saved completed
+and incomplete runs, evidence, citations, depth settings, and recorded summaries.
+It excludes unsaved session results, provider configuration, and demo data. Keep
+the file private because it contains your research content.
+
+Choose a backup file to preview its entry counts, then select **Restore missing
+history**. All records are validated before writing. Restore merges in one
+transaction: identical IDs/content are skipped, and conflicting IDs cancel the
+entire restore without overwriting existing history. Repeating a restore is safe.
+The active result and unsaved work are not replaced. Invalid files, unsupported
+versions, broken evidence references, and backups over 20 MB or 5,000 entries
+are rejected. Restore checks data structure; it does not reverify research claims.
+
+Backups use a consistent SQLite read snapshot while the app is running. Preparing
+a new download is explicit; an earlier prepared download does not automatically
+include later research. If any stored record is invalid, export fails rather than
+silently omitting it. Neither backup nor restore makes provider calls.
+
 ### Run summaries
 
 New web-interface runs retain a **Run summary** in history and exports, including
