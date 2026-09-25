@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import sqlite3
 from typing import Literal
@@ -65,12 +65,37 @@ class _Snapshot(BaseModel):
 
 
 @dataclass(frozen=True)
+class SearchMatch:
+    location: str
+    excerpt: str
+
+
+def _search_match(location: str, text: str, query: str) -> SearchMatch | None:
+    offset = text.casefold().find(query)
+    if offset < 0:
+        return None
+    # Case folding can expand characters (e.g. ß -> ss). Map the match
+    # back to the original text before choosing its surrounding context.
+    folded_offset = 0
+    start = 0
+    for start, character in enumerate(text):
+        folded_offset += len(character.casefold())
+        if folded_offset > offset:
+            break
+    left = max(0, start - min(40, max(0, 180 - len(query))))
+    right = min(len(text), left + 180)
+    excerpt = " ".join(text[left:right].split())
+    return SearchMatch(location, ("…" if left else "") + excerpt + ("…" if right < len(text) else ""))
+
+
+@dataclass(frozen=True)
 class SavedReport:
     id: str
     question: str
     created_at: str
     citation_count: int
     status: str = "completed"
+    match: SearchMatch | None = field(default=None, compare=False)
 
     @property
     def label(self) -> str:
@@ -148,8 +173,12 @@ class HistoryStore:
                 )
                 matches = []
                 for row in rows:
-                    if not query or query in row[1].casefold():
+                    if not query:
                         matches.append(SavedReport(*row[:5]))
+                        continue
+                    question_match = _search_match("Question", row[1], query)
+                    if question_match:
+                        matches.append(SavedReport(*row[:5], match=question_match))
                         continue
                     model = _Snapshot if row[4] == "completed" else IncompleteResearch
                     try:
@@ -158,12 +187,16 @@ class HistoryStore:
                         # A damaged entry remains discoverable by question and
                         # must not prevent searching other saved research.
                         continue
-                    texts = [source.title or "" for source in snapshot.sources]
-                    texts.extend(item.excerpt for item in snapshot.evidence)
+                    texts = []
                     if isinstance(snapshot, _Snapshot):
-                        texts.append(snapshot.report.content)
-                    if any(query in text.casefold() for text in texts):
-                        matches.append(SavedReport(*row[:5]))
+                        texts.append(("Report text", snapshot.report.content))
+                    texts.extend(("Source title", source.title or "") for source in snapshot.sources)
+                    texts.extend(("Evidence excerpt", item.excerpt) for item in snapshot.evidence)
+                    for location, text in texts:
+                        match = _search_match(location, text, query)
+                        if match:
+                            matches.append(SavedReport(*row[:5], match=match))
+                            break
                 return matches
         except (OSError, sqlite3.Error) as exc:
             raise HistoryError("Could not read local research history.") from exc

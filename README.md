@@ -1162,6 +1162,11 @@ results keep their newest-first order. Empty searches show all entries. Searches
 run locally without provider calls and do not change saved or unsaved research.
 Damaged entries remain searchable by question, but their invalid contents are
 excluded so they cannot prevent other results from appearing.
+Each search result includes a short match preview; selecting it shows the excerpt
+below the list before you open the report. Previews use original text and label
+the matching field: question, report text, source title, or evidence excerpt.
+When multiple fields match, the first in that order is shown. Long excerpts are
+trimmed around the match with ellipses. Previews do not change saved content.
 
 ### Backup and restore
 

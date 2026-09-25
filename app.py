@@ -124,9 +124,14 @@ with st.sidebar:
         st.warning("Local history could not be read. You can still research and download reports.")
         saved = []
     if saved:
-        labels = {item.id: item.label for item in saved}
+        labels = {item.id: item.label + (f" · {item.match.location}: {item.match.excerpt}" if item.match else "")
+                  for item in saved}
         selected = st.selectbox("Saved reports", options=list(labels),
                                 format_func=labels.__getitem__, key="history_selection")
+        selected_entry = next(item for item in saved if item.id == selected)
+        if selected_entry.match:
+            st.caption(f"Match in {selected_entry.match.location.lower()}")
+            st.text(selected_entry.match.excerpt)
         open_requested = st.button("Open saved research", key="open_history")
         if open_requested and unsaved_entries():
             st.warning("Your current research is unsaved. Save it below, or download it and explicitly discard the session copy before opening another entry.")
