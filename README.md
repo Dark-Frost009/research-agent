@@ -1155,6 +1155,14 @@ runs continue to use their configured budgets directly.
 
 ## Saved research history
 
+Use **Search saved research** in the sidebar to find text in saved questions,
+report bodies, source titles, or evidence excerpts, including incomplete runs.
+Search matches a literal substring, ignores letter case, and trims outer spaces;
+results keep their newest-first order. Empty searches show all entries. Searches
+run locally without provider calls and do not change saved or unsaved research.
+Damaged entries remain searchable by question, but their invalid contents are
+excluded so they cannot prevent other results from appearing.
+
 ### Backup and restore
 
 In the sidebar, expand **History backup & restore**, choose **Prepare history

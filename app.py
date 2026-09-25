@@ -116,7 +116,8 @@ if submitted:
 with st.sidebar:
     st.header("Saved research")
     st.caption("Stored on this computer. Opening a report does not use Gemini.")
-    search = st.text_input("Find a saved question", key="history_search")
+    search = st.text_input("Search saved research", key="history_search",
+                           help="Search questions, report text, source titles, and evidence excerpts. Matches ignore letter case and use the exact text you enter.")
     try:
         saved = history.list_reports(search)
     except HistoryError:

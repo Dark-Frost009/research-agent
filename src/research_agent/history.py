@@ -136,15 +136,35 @@ class HistoryStore:
     def list_reports(self, search: str = "") -> list[SavedReport]:
         if not self.path.exists():
             return []
+        query = search.strip().casefold()
         try:
             with closing(self._connect()) as connection:
+                # Do not load report bodies for the ordinary unfiltered listing.
+                payload_column = ", payload" if query else ""
                 rows = connection.execute(
-                    "SELECT id, question, created_at, citation_count, 'completed' FROM reports "
-                    "UNION ALL SELECT id, question, created_at, 0, 'incomplete' FROM incomplete_runs "
+                    "SELECT id, question, created_at, citation_count, 'completed'" + payload_column + " FROM reports "
+                    "UNION ALL SELECT id, question, created_at, 0, 'incomplete'" + payload_column + " FROM incomplete_runs "
                     "ORDER BY created_at DESC, id DESC"
-                ).fetchall()
-            query = search.strip().casefold()
-            return [SavedReport(*row) for row in rows if query in row[1].casefold()]
+                )
+                matches = []
+                for row in rows:
+                    if not query or query in row[1].casefold():
+                        matches.append(SavedReport(*row[:5]))
+                        continue
+                    model = _Snapshot if row[4] == "completed" else IncompleteResearch
+                    try:
+                        snapshot = model.model_validate_json(row[5])
+                    except ValidationError:
+                        # A damaged entry remains discoverable by question and
+                        # must not prevent searching other saved research.
+                        continue
+                    texts = [source.title or "" for source in snapshot.sources]
+                    texts.extend(item.excerpt for item in snapshot.evidence)
+                    if isinstance(snapshot, _Snapshot):
+                        texts.append(snapshot.report.content)
+                    if any(query in text.casefold() for text in texts):
+                        matches.append(SavedReport(*row[:5]))
+                return matches
         except (OSError, sqlite3.Error) as exc:
             raise HistoryError("Could not read local research history.") from exc
 
