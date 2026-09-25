@@ -17,6 +17,16 @@ from research_agent.incomplete import IncompleteResearch
 from research_agent.depth import ResearchDepth
 from research_agent.run_summary import RunSummary
 
+OUTCOME_FILTERS = {
+    "Verified answer": "verified",
+    "No evidence collected": "no_evidence",
+    "Answer rejected by verification": "verification_rejected",
+    "Not enough budget for answer checks": "finalization_budget",
+    "No verified answer": "no_verified_answer",
+    "Interrupted run": "incomplete",
+    "Not recorded": "unknown",
+}
+
 
 class HistoryError(RuntimeError):
     """A local history operation failed; the current report remains usable."""
@@ -161,11 +171,14 @@ class HistoryStore:
 
     def list_reports(self, search: str = "", *, status: str | None = None,
                      depth: str | None = None, start_date: date | None = None,
-                     end_date: date | None = None) -> list[SavedReport]:
+                     end_date: date | None = None,
+                     outcome: str | None = None) -> list[SavedReport]:
         if status not in (None, "completed", "incomplete"):
             raise ValueError("Unknown history status filter.")
         if depth not in (None, "Quick", "Standard", "Thorough", "Not recorded"):
             raise ValueError("Unknown history depth filter.")
+        if outcome is not None and outcome not in OUTCOME_FILTERS.values():
+            raise ValueError("Unknown history outcome filter.")
         if start_date and end_date and start_date > end_date:
             raise ValueError("Start date must be on or before end date.")
         if not self.path.exists():
@@ -174,7 +187,7 @@ class HistoryStore:
         try:
             with closing(self._connect()) as connection:
                 # Do not load report bodies for the ordinary unfiltered listing.
-                payload_column = ", payload" if query or depth else ""
+                payload_column = ", payload" if query or depth or outcome else ""
                 rows = connection.execute(
                     "SELECT id, question, created_at, citation_count, 'completed'" + payload_column + " FROM reports "
                     "UNION ALL SELECT id, question, created_at, 0, 'incomplete'" + payload_column + " FROM incomplete_runs "
@@ -197,13 +210,17 @@ class HistoryStore:
                             continue
                     model = _Snapshot if row[4] == "completed" else IncompleteResearch
                     snapshot = None
-                    if depth:
+                    if depth or outcome:
                         try:
                             snapshot = model.model_validate_json(row[5])
                         except ValidationError:
                             continue
                         recorded_depth = snapshot.depth.name if snapshot.depth else "Not recorded"
-                        if recorded_depth != depth:
+                        if depth and recorded_depth != depth:
+                            continue
+                        recorded_outcome = ("incomplete" if isinstance(snapshot, IncompleteResearch)
+                                            else snapshot.summary.outcome if snapshot.summary else "unknown")
+                        if outcome and recorded_outcome != outcome:
                             continue
                     if not query:
                         matches.append(SavedReport(*row[:5]))

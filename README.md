@@ -1163,6 +1163,15 @@ it does not infer a mode from their budget. Invalid date ranges show a warning.
 Filtering does not open a report, change unsaved work, or use provider quota.
 Unreadable depth metadata is excluded when a depth filter is selected.
 
+The **Research outcome** filter distinguishes verified answers, runs with no
+evidence, answers rejected by verification, insufficient budget for final answer
+checks, other runs without a verified answer, and interrupted runs. These use the
+saved outcome, not guesses based on report wording or citation counts. Older
+completed reports with missing or unknown outcomes appear under **Not recorded**;
+incomplete runs remain **Interrupted run**, even without a summary. Unreadable
+records are excluded when an outcome filter is selected. Outcome filters combine
+with all other filters and search, and reset with **Clear history filters**.
+
 Use **Search saved research** in the sidebar to find text in saved questions,
 report bodies, source titles, or evidence excerpts, including incomplete runs.
 Search matches a literal substring, ignores letter case, and trims outer spaces;
