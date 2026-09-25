@@ -82,6 +82,16 @@ if st.toggle("Offline demo", key="offline_demo", help="Explore a fictional sampl
     render_demo()
     st.stop()
 
+if st.toggle("Offline evaluation dashboard", key="evaluation_dashboard"):
+    for key in ("question", "research_depth", "history_search", "history_selection",
+                "history_status", "history_depth", "history_start", "history_end", "history_outcome",
+                "compare_runs", "compare_first", "compare_second"):
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
+    from research_agent.evaluation_dashboard import render_evaluation_dashboard
+    render_evaluation_dashboard()
+    st.stop()
+
 history = get_history_store()
 depth_name = st.radio("Research depth", DEPTH_NAMES, index=1, horizontal=True, key="research_depth")
 depth_ready = True

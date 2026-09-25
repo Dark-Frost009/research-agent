@@ -1155,6 +1155,14 @@ runs continue to use their configured budgets directly.
 
 ## Offline answer-quality scenarios
 
+Turn on **Offline evaluation dashboard** in Streamlit and click **Run offline
+evaluations** to run the bundled suite in a separate process. The dashboard shows
+each scenario's result, failures grouped by category, and a downloadable JSON
+summary. It does not access research history or replace unsaved work. Results are
+session snapshots; rerun after code changes. The local checkout must include the
+tests, evaluation fixtures, and pytest (`pip install -e ".[dev]"`). Runs have a
+90-second timeout and use temporary reports, with no provider calls.
+
 Run `python -m pytest tests/test_offline_evaluation.py -v` for nineteen fixed research
 scenarios covering grounded answers, citation provenance, semantic rejection,
 conflicting evidence, and insufficient evidence, including multiple sources and
