@@ -8,9 +8,10 @@ import pytest
 
 from research_agent.graph.builder import build_research_graph
 from research_agent.graph.nodes.evidence_collector import EvidenceCollector
+from research_agent.graph.nodes.evidence import EvidenceExtractor, EvidenceResponse
 from research_agent.graph.nodes.synthesis import Synthesizer, SynthesisResponse
 from research_agent.graph.nodes.synthesis_verifier import SynthesisVerificationResponse
-from research_agent.models.schemas import Evidence, SubQuestion
+from research_agent.models.schemas import SubQuestion
 from test_production_graph import _isolated_context, _initial_state, _policy, GraphSourceFetcher, GraphPlanner
 
 
@@ -35,24 +36,29 @@ def _source_index(url):
 class FixtureExtractor:
     def __init__(self, case):
         self.case = case
+        self.prompts = []
 
     def extract(self, call):
         index = _source_index(call.fetch_result.source.url)
         excerpt = self.case['sources'][index]['excerpt']
-        if excerpt is None:
-            return []
-        assert excerpt in call.fetch_result.page.text
-        return [Evidence(id=f'fixture-evidence-{index + 1}', source_id=call.fetch_result.source.id,
-                         sub_question_id=call.sub_question.id, excerpt=excerpt)]
+        prompts = self.prompts
+        class ScriptedExtraction:
+            def generate_structured(self, *, system_prompt, user_prompt, response_model):
+                prompts.append((system_prompt, user_prompt))
+                assert response_model is EvidenceResponse
+                return response_model.model_validate(dict(evidence=[] if excerpt is None else [dict(excerpt=excerpt)]))
+        return EvidenceExtractor(llm=ScriptedExtraction(), id_factory=lambda: f'fixture-evidence-{index + 1}').extract(call)
 
 
 class ScriptedFinalizer:
     def __init__(self, case):
         self.case = case
         self.calls = []
+        self.prompts = []
 
     def generate_structured(self, *, system_prompt, user_prompt, response_model):
         self.calls.append(response_model)
+        self.prompts.append((system_prompt, user_prompt))
         case = self.case
         if response_model is SynthesisResponse:
             return response_model.model_validate(dict(content=case['answer'], claims=case['claims']))
@@ -83,6 +89,8 @@ def test_offline_answer_quality(case, monkeypatch, record_property):
         pytest.fail('Offline evaluations must never connect to the network')
     monkeypatch.setattr(socket.socket, 'connect', forbidden)
     monkeypatch.setattr(socket, 'create_connection', forbidden)
+    canary = 'OFFLINE_DUMMY_SECRET_7f29_NOT_A_REAL_CREDENTIAL'
+    monkeypatch.setenv('EVAL_ONLY_SECRET', canary)
     llm = ScriptedFinalizer(case)
     citation_ids = []
     def citation_id():
@@ -91,10 +99,11 @@ def test_offline_answer_quality(case, monkeypatch, record_property):
     planner = GraphPlanner(planned=[SubQuestion(id=f'fixture-question-{index}',
         question=f"{case['question']} Source {index}", rationale='Fixture source', created_at_iteration=0)
         for index in range(1, len(case['sources']) + 1)])
+    extractor = FixtureExtractor(case)
     context = replace(_isolated_context(planner=planner),
                       budget_policy=_policy(max_research_iterations=1),
                       source_fetcher=FixtureFetcher(case),
-                      evidence_collector=EvidenceCollector(evidence_extractor=FixtureExtractor(case)),
+                      evidence_collector=EvidenceCollector(evidence_extractor=extractor),
                       synthesizer=Synthesizer(llm=llm, citation_id_factory=citation_id))
     state = _initial_state()
     state['original_question'] = case['question']
@@ -106,6 +115,18 @@ def test_offline_answer_quality(case, monkeypatch, record_property):
     assert result['finalization_outcome'] == case['expected']
     assert report.question == case['question']
     assert len(llm.calls) == case['expected_calls']
+    assert len(extractor.prompts) == len(case['sources'])
+    all_prompts = extractor.prompts + llm.prompts
+    assert all(canary not in system and canary not in user for system, user in all_prompts)
+    assert canary not in report.model_dump_json()
+    if marker := case.get('attack_marker'):
+        assert all(marker not in system for system, user in all_prompts)
+        assert marker in extractor.prompts[0][1]
+        assert 'untrusted' in extractor.prompts[0][0].lower()
+        assert marker in llm.prompts[0][1]
+        assert 'untrusted' in llm.prompts[0][0].lower()
+        assert report.question == case['question']
+        assert marker not in report.model_dump_json()
     assert len(result['sources']) == len(case['sources'])
     sources = {source.id: source for source in result['sources']}
     evidence_by_id = {item.id: item for item in result['evidence']}
