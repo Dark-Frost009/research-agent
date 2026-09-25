@@ -74,7 +74,8 @@ if st.toggle("Offline demo", key="offline_demo", help="Explore a fictional sampl
     # Keep real widget values across Streamlit's cleanup of hidden widgets.
     # Real result objects and unsaved-work flags are never replaced by demo data.
     for key in ("question", "research_depth", "history_search", "history_selection",
-                "history_status", "history_depth", "history_start", "history_end", "history_outcome"):
+                "history_status", "history_depth", "history_start", "history_end", "history_outcome",
+                "compare_runs", "compare_first", "compare_second"):
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
     from research_agent.demo import render_demo
@@ -209,6 +210,10 @@ with st.sidebar:
     else:
         st.caption("No matching saved reports." if search.strip() or filters_active else "Your completed reports will appear here.")
     render_backup_controls(history)
+
+if st.toggle("Compare saved runs", key="compare_runs"):
+    from research_agent.comparison_ui import render_comparison
+    render_comparison(history)
 
 pending = unsaved_entries()
 if pending:

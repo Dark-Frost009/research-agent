@@ -1155,6 +1155,15 @@ runs continue to use their configured budgets directly.
 
 ## Saved research history
 
+Turn on **Compare saved runs**, then select two distinct entries to view their
+answers, recorded outcomes, research depth, budget usage, and sources side by
+side. Comparison uses all saved history regardless of sidebar filters and keeps
+your current result and unsaved work intact. Incomplete runs show no completed
+answer; missing older metadata is labeled as not recorded. Source overlap uses
+exact available HTTP(S) URLs, not matching page contents. Counts are saved budget
+reservations rather than token usage or billing. This read-only view uses no
+provider calls and does not assign an answer-quality score.
+
 Select a saved report or incomplete run, then choose **Research this question
 again** in the sidebar to fill in its original question and recorded depth.
 Review or edit them above and click **Start research** when ready. Preparing a
