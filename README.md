@@ -1155,6 +1155,15 @@ runs continue to use their configured budgets directly.
 
 ## Saved research history
 
+Select a saved report or incomplete run, then choose **Research this question
+again** in the sidebar to fill in its original question and recorded depth.
+Review or edit them above and click **Start research** when ready. Preparing a
+retry makes no provider calls and preserves the original history entry; starting
+research creates a fresh run rather than resuming collected evidence. The saved
+depth mode uses current configured limits. If no depth was recorded, your current
+selection is kept. Unsaved results must be saved or explicitly discarded before
+preparing another run.
+
 Expand **Filter saved research** to combine search with run status, saved research
 depth, and optional From/Through dates. Dates are inclusive and use UTC, matching
 the history labels. **Not recorded** finds older runs without depth metadata;

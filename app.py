@@ -28,6 +28,28 @@ def unsaved_entries():
 st.set_page_config(page_title="Research Agent", page_icon="🔎", layout="centered")
 
 
+def prepare_research_again(record_id):
+    if unsaved_entries():
+        st.session_state["research_again_notice"] = (
+            "warning", "Save or explicitly discard your unsaved research before preparing another run. Your question and depth have been kept.")
+        return
+    try:
+        saved_result = get_history_store().load(record_id)
+    except HistoryError as exc:
+        st.session_state["research_again_notice"] = ("warning", str(exc))
+        return
+    st.session_state["question"] = (saved_result.question if isinstance(saved_result, IncompleteResearch)
+                                    else saved_result.report.question)
+    saved_depth = getattr(saved_result, "depth", None)
+    if saved_depth is not None:
+        st.session_state["research_depth"] = saved_depth.name
+    depth_note = ("The saved depth is selected using your current configured limits." if saved_depth
+                  else "No depth was recorded, so your current depth selection has been kept.")
+    st.session_state["research_again_notice"] = (
+        "info", "Question ready above. " + depth_note
+        + " Review it and click Start research to begin a fresh run using provider quota. No research has started; the original entry is kept.")
+
+
 def render_run_summary(result):
     st.subheader("Run summary")
     summary = getattr(result, "summary", None)
@@ -77,6 +99,11 @@ with st.form("research", clear_on_submit=False):
     submitted = st.form_submit_button("Start research", type="primary", disabled=not depth_ready)
 
 st.caption("Uses your configured Gemini and Tavily services. Reports and incomplete runs are saved on this computer. Open them from Saved research in the sidebar.")
+
+retry_notice = st.session_state.pop("research_again_notice", None)
+if retry_notice:
+    level, message = retry_notice
+    (st.warning if level == "warning" else st.info)(message)
 
 if submitted:
     if not question.strip():
@@ -176,6 +203,9 @@ with st.sidebar:
                     st.session_state["completed_research"] = opened
                     st.session_state["saved_report_id"] = selected
                     st.session_state["history_save_failed"] = False
+        st.button("Research this question again", key="research_again",
+                  on_click=prepare_research_again, args=(selected,),
+                  help="Fill in the selected saved question and recorded depth. Review them above, then click Start research to run it again.")
     else:
         st.caption("No matching saved reports." if search.strip() or filters_active else "Your completed reports will appear here.")
     render_backup_controls(history)
