@@ -1155,9 +1155,10 @@ runs continue to use their configured budgets directly.
 
 ## Offline answer-quality scenarios
 
-Run `python -m pytest tests/test_offline_evaluation.py -v` for eight fixed research
+Run `python -m pytest tests/test_offline_evaluation.py -v` for fourteen fixed research
 scenarios covering grounded answers, citation provenance, semantic rejection,
-conflicting evidence, and insufficient evidence. They exercise the production
+conflicting evidence, and insufficient evidence, including multiple sources and
+claims, swapped citations, and rejection when any claim lacks support. They exercise the production
 graph with scripted providers and blocked network connections, using no quota.
 These are safeguard regression checks, not a benchmark of live Gemini quality:
 semantic verdicts and extracted evidence are supplied by the fixtures.

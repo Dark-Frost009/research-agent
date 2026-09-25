@@ -1,14 +1,550 @@
 {
-  "version": 1,
+  "version": 2,
   "scope": "Fictional source fixtures and scripted provider/verifier responses. Measures production pipeline safeguards, not live model accuracy.",
   "cases": [
-    {"id":"supported_fact","question":"How long may Meadow Library books be borrowed?","source_text":"Meadow Library lends books for 21 days.","excerpt":"Meadow Library lends books for 21 days.","answer":"Books may be borrowed for 21 days.","claim":"Books may be borrowed for 21 days.","quote":"lends books for 21 days","handle":"E1","supported":true,"coverage":true,"expected":"verified","expected_calls":2},
-    {"id":"qualified_answer","question":"Can a Meadow Library book be renewed?","source_text":"A book may be renewed once for 14 days if nobody has placed a hold.","excerpt":"A book may be renewed once for 14 days if nobody has placed a hold.","answer":"A book may be renewed once for 14 days if nobody has placed a hold.","claim":"A book may be renewed once for 14 days if nobody has placed a hold.","quote":"A book may be renewed once for 14 days if nobody has placed a hold.","handle":"E1","supported":true,"coverage":true,"expected":"verified","expected_calls":2},
-    {"id":"invented_evidence_handle","question":"How long is the loan?","source_text":"The loan lasts 21 days.","excerpt":"The loan lasts 21 days.","answer":"The loan lasts 21 days.","claim":"The loan lasts 21 days.","quote":"The loan lasts 21 days.","handle":"E99","supported":true,"coverage":true,"expected":"verification_rejected","expected_calls":1},
-    {"id":"fabricated_quote","question":"How long is the loan?","source_text":"The loan lasts 21 days.","excerpt":"The loan lasts 21 days.","answer":"The loan lasts 90 days.","claim":"The loan lasts 90 days.","quote":"The loan lasts 90 days.","handle":"E1","supported":true,"coverage":true,"expected":"verification_rejected","expected_calls":1},
-    {"id":"unsupported_generalization","question":"Can every book always be renewed?","source_text":"A book may be renewed if nobody has placed a hold.","excerpt":"A book may be renewed if nobody has placed a hold.","answer":"Every book can always be renewed.","claim":"Every book can always be renewed.","quote":"A book may be renewed if nobody has placed a hold.","handle":"E1","supported":false,"coverage":true,"expected":"verification_rejected","expected_calls":2},
-    {"id":"undeclared_assertion","question":"What are the loan terms?","source_text":"The loan lasts 21 days.","excerpt":"The loan lasts 21 days.","answer":"The loan lasts 21 days. Late fees are always waived.","claim":"The loan lasts 21 days.","quote":"The loan lasts 21 days.","handle":"E1","supported":true,"coverage":false,"expected":"verification_rejected","expected_calls":2},
-    {"id":"conflicting_evidence","question":"What is the current loan period?","source_text":"One undated notice says 21 days. Another undated notice says 14 days. Neither identifies the current policy.","excerpt":"One undated notice says 21 days. Another undated notice says 14 days. Neither identifies the current policy.","answer":"The current loan period is definitely 21 days.","claim":"The current loan period is definitely 21 days.","quote":"One undated notice says 21 days.","handle":"E1","supported":false,"coverage":true,"expected":"verification_rejected","expected_calls":2},
-    {"id":"irrelevant_source_abstention","question":"What is the library late fee?","source_text":"The library has blue doors.","excerpt":null,"answer":null,"claim":null,"quote":null,"handle":null,"supported":null,"coverage":null,"expected":"no_evidence","expected_calls":0}
+    {
+      "id": "supported_fact",
+      "question": "How long may Meadow Library books be borrowed?",
+      "answer": "Books may be borrowed for 21 days.",
+      "coverage": true,
+      "expected": "verified",
+      "expected_calls": 2,
+      "sources": [
+        {
+          "text": "Meadow Library lends books for 21 days.",
+          "excerpt": "Meadow Library lends books for 21 days."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "Books may be borrowed for 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "lends books for 21 days"
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        }
+      ],
+      "expected_citations": [
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "id": "qualified_answer",
+      "question": "Can a Meadow Library book be renewed?",
+      "answer": "A book may be renewed once for 14 days if nobody has placed a hold.",
+      "coverage": true,
+      "expected": "verified",
+      "expected_calls": 2,
+      "sources": [
+        {
+          "text": "A book may be renewed once for 14 days if nobody has placed a hold.",
+          "excerpt": "A book may be renewed once for 14 days if nobody has placed a hold."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "A book may be renewed once for 14 days if nobody has placed a hold.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "A book may be renewed once for 14 days if nobody has placed a hold."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        }
+      ],
+      "expected_citations": [
+        [
+          1
+        ]
+      ]
+    },
+    {
+      "id": "invented_evidence_handle",
+      "question": "How long is the loan?",
+      "answer": "The loan lasts 21 days.",
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 1,
+      "sources": [
+        {
+          "text": "The loan lasts 21 days.",
+          "excerpt": "The loan lasts 21 days."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "The loan lasts 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E99",
+              "supporting_quote": "The loan lasts 21 days."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        }
+      ],
+      "expected_citations": []
+    },
+    {
+      "id": "fabricated_quote",
+      "question": "How long is the loan?",
+      "answer": "The loan lasts 90 days.",
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 1,
+      "sources": [
+        {
+          "text": "The loan lasts 21 days.",
+          "excerpt": "The loan lasts 21 days."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "The loan lasts 90 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "The loan lasts 90 days."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        }
+      ],
+      "expected_citations": []
+    },
+    {
+      "id": "unsupported_generalization",
+      "question": "Can every book always be renewed?",
+      "answer": "Every book can always be renewed.",
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 2,
+      "sources": [
+        {
+          "text": "A book may be renewed if nobody has placed a hold.",
+          "excerpt": "A book may be renewed if nobody has placed a hold."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "Every book can always be renewed.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "A book may be renewed if nobody has placed a hold."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": false
+        }
+      ],
+      "expected_citations": []
+    },
+    {
+      "id": "undeclared_assertion",
+      "question": "What are the loan terms?",
+      "answer": "The loan lasts 21 days. Late fees are always waived.",
+      "coverage": false,
+      "expected": "verification_rejected",
+      "expected_calls": 2,
+      "sources": [
+        {
+          "text": "The loan lasts 21 days.",
+          "excerpt": "The loan lasts 21 days."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "The loan lasts 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "The loan lasts 21 days."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        }
+      ],
+      "expected_citations": []
+    },
+    {
+      "id": "conflicting_evidence",
+      "question": "What is the current loan period?",
+      "answer": "The current loan period is definitely 21 days.",
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 2,
+      "sources": [
+        {
+          "text": "One undated notice says 21 days. Another undated notice says 14 days. Neither identifies the current policy.",
+          "excerpt": "One undated notice says 21 days. Another undated notice says 14 days. Neither identifies the current policy."
+        }
+      ],
+      "claims": [
+        {
+          "claim_text": "The current loan period is definitely 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "One undated notice says 21 days."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": false
+        }
+      ],
+      "expected_citations": []
+    },
+    {
+      "id": "irrelevant_source_abstention",
+      "question": "What is the library late fee?",
+      "answer": null,
+      "coverage": null,
+      "expected": "no_evidence",
+      "expected_calls": 0,
+      "sources": [
+        {
+          "text": "The library has blue doors.",
+          "excerpt": null
+        }
+      ],
+      "claims": [],
+      "verdicts": [],
+      "expected_citations": []
+    },
+    {
+      "id": "two_claims_correct_sources",
+      "question": "What are the borrowing and renewal rules?",
+      "sources": [
+        {
+          "text": "Books may be borrowed for 21 days.",
+          "excerpt": "Books may be borrowed for 21 days."
+        },
+        {
+          "text": "Books may be renewed once if no hold exists.",
+          "excerpt": "Books may be renewed once if no hold exists."
+        }
+      ],
+      "answer": "Books may be borrowed for 21 days. Books may be renewed once if no hold exists.",
+      "claims": [
+        {
+          "claim_text": "Books may be borrowed for 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "Books may be borrowed for 21 days."
+            }
+          ]
+        },
+        {
+          "claim_text": "Books may be renewed once if no hold exists.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E2",
+              "supporting_quote": "Books may be renewed once if no hold exists."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        },
+        {
+          "claim_handle": "C2",
+          "supported": true
+        }
+      ],
+      "coverage": true,
+      "expected": "verified",
+      "expected_calls": 2,
+      "expected_citations": [
+        [
+          1
+        ],
+        [
+          2
+        ]
+      ]
+    },
+    {
+      "id": "one_claim_two_sources",
+      "question": "Do both branches offer 21-day loans?",
+      "sources": [
+        {
+          "text": "Meadow offers 21-day loans.",
+          "excerpt": "Meadow offers 21-day loans."
+        },
+        {
+          "text": "River offers 21-day loans.",
+          "excerpt": "River offers 21-day loans."
+        }
+      ],
+      "answer": "Meadow and River both offer 21-day loans.",
+      "claims": [
+        {
+          "claim_text": "Meadow and River both offer 21-day loans.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "Meadow offers 21-day loans."
+            },
+            {
+              "evidence_handle": "E2",
+              "supporting_quote": "River offers 21-day loans."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        }
+      ],
+      "coverage": true,
+      "expected": "verified",
+      "expected_calls": 2,
+      "expected_citations": [
+        [
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "id": "quote_assigned_wrong_source",
+      "question": "What are the borrowing and renewal rules?",
+      "sources": [
+        {
+          "text": "Books may be borrowed for 21 days.",
+          "excerpt": "Books may be borrowed for 21 days."
+        },
+        {
+          "text": "Books may be renewed once if no hold exists.",
+          "excerpt": "Books may be renewed once if no hold exists."
+        }
+      ],
+      "answer": "Books may be borrowed for 21 days. Books may be renewed once if no hold exists.",
+      "claims": [
+        {
+          "claim_text": "Books may be borrowed for 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E2",
+              "supporting_quote": "Books may be borrowed for 21 days."
+            }
+          ]
+        },
+        {
+          "claim_text": "Books may be renewed once if no hold exists.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "Books may be renewed once if no hold exists."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        },
+        {
+          "claim_handle": "C2",
+          "supported": true
+        }
+      ],
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 1,
+      "expected_citations": []
+    },
+    {
+      "id": "one_unsupported_claim_blocks_all",
+      "question": "What are the borrowing and renewal rules?",
+      "sources": [
+        {
+          "text": "Books may be borrowed for 21 days.",
+          "excerpt": "Books may be borrowed for 21 days."
+        },
+        {
+          "text": "Books may be renewed once if no hold exists.",
+          "excerpt": "Books may be renewed once if no hold exists."
+        }
+      ],
+      "answer": "Books may be borrowed for 21 days. Books can always be renewed without restrictions.",
+      "claims": [
+        {
+          "claim_text": "Books may be borrowed for 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "Books may be borrowed for 21 days."
+            }
+          ]
+        },
+        {
+          "claim_text": "Books can always be renewed without restrictions.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E2",
+              "supporting_quote": "Books may be renewed once if no hold exists."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        },
+        {
+          "claim_handle": "C2",
+          "supported": false
+        }
+      ],
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 2,
+      "expected_citations": []
+    },
+    {
+      "id": "conflicting_sources_explicitly_reported",
+      "question": "Do the undated notices agree on loan duration?",
+      "sources": [
+        {
+          "text": "The undated Meadow notice states a 21-day loan.",
+          "excerpt": "The undated Meadow notice states a 21-day loan."
+        },
+        {
+          "text": "The undated River notice states a 14-day loan.",
+          "excerpt": "The undated River notice states a 14-day loan."
+        }
+      ],
+      "answer": "The undated Meadow notice states a 21-day loan. The undated River notice states a 14-day loan.",
+      "claims": [
+        {
+          "claim_text": "The undated Meadow notice states a 21-day loan.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "The undated Meadow notice states a 21-day loan."
+            }
+          ]
+        },
+        {
+          "claim_text": "The undated River notice states a 14-day loan.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E2",
+              "supporting_quote": "The undated River notice states a 14-day loan."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": true
+        },
+        {
+          "claim_handle": "C2",
+          "supported": true
+        }
+      ],
+      "coverage": true,
+      "expected": "verified",
+      "expected_calls": 2,
+      "expected_citations": [
+        [
+          1
+        ],
+        [
+          2
+        ]
+      ]
+    },
+    {
+      "id": "conflicting_sources_false_agreement",
+      "question": "Do the undated notices agree on loan duration?",
+      "sources": [
+        {
+          "text": "The undated Meadow notice states a 21-day loan.",
+          "excerpt": "The undated Meadow notice states a 21-day loan."
+        },
+        {
+          "text": "The undated River notice states a 14-day loan.",
+          "excerpt": "The undated River notice states a 14-day loan."
+        }
+      ],
+      "answer": "Both notices agree the current loan duration is 21 days.",
+      "claims": [
+        {
+          "claim_text": "Both notices agree the current loan duration is 21 days.",
+          "evidence_support": [
+            {
+              "evidence_handle": "E1",
+              "supporting_quote": "The undated Meadow notice states a 21-day loan."
+            },
+            {
+              "evidence_handle": "E2",
+              "supporting_quote": "The undated River notice states a 14-day loan."
+            }
+          ]
+        }
+      ],
+      "verdicts": [
+        {
+          "claim_handle": "C1",
+          "supported": false
+        }
+      ],
+      "coverage": true,
+      "expected": "verification_rejected",
+      "expected_calls": 2,
+      "expected_citations": []
+    }
   ]
 }
