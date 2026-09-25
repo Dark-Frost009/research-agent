@@ -1155,6 +1155,22 @@ runs continue to use their configured budgets directly.
 
 ## Offline answer-quality scenarios
 
+### Local release-readiness report
+
+Run `python -m research_agent.release_readiness` to run the full offline suite and
+write Markdown and JSON reports under `.local/readiness/`. Use `--output-dir PATH`
+to choose another folder. The check records a source fingerprint and compares
+scenario results with the latest saved evaluation when available; missing or
+unreadable baselines are explicitly unassessed. It does not change research or
+evaluation history. Tests that fail, error, skip, or produce incomplete results
+prevent an offline pass. Source changes during the run also prevent a pass.
+
+Exit code 0 means offline checks passed, 1 means they need attention, and 2 means
+the check could not complete (including a three-minute timeout). A failed or timed
+out command must not be mistaken for a new report: earlier files may still exist.
+Live Gemini quality and human citation review remain pending regardless of the
+offline result; this report does not certify public deployment readiness.
+
 Turn on **Offline evaluation dashboard** in Streamlit and click **Run offline
 evaluations** to run the bundled suite in a separate process. The dashboard shows
 each scenario's result, failures grouped by category, and a downloadable JSON
