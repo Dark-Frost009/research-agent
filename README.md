@@ -1163,6 +1163,12 @@ answer; missing older metadata is labeled as not recorded. Source overlap uses
 exact available HTTP(S) URLs, not matching page contents. Counts are saved budget
 reservations rather than token usage or billing. This read-only view uses no
 provider calls and does not assign an answer-quality score.
+Choose **Download comparison (.md)** after selecting both runs to keep a portable
+Markdown snapshot with their saved entry IDs, questions, answers, outcomes, depth,
+budget usage, warnings, source lists, and shared/distinct source URLs. Research
+text is fenced as literal text so embedded HTML and image markup remain inert.
+The download uses the same loaded snapshots as the displayed comparison and does
+not change history or use provider quota.
 
 Select a saved report or incomplete run, then choose **Research this question
 again** in the sidebar to fill in its original question and recorded depth.

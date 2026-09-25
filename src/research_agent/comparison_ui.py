@@ -6,10 +6,7 @@ import streamlit as st
 from research_agent.history import HistoryError, HistoryStore
 from research_agent.incomplete import IncompleteResearch
 from research_agent.ui_service import safe_source_url
-
-
-def _source_urls(result):
-    return {url for source in result.sources if (url := safe_source_url(source))}
+from research_agent.comparison_export import comparison_markdown, source_urls as _source_urls
 
 
 def _render_run(result, label, other_urls):
@@ -92,6 +89,9 @@ def render_comparison(history: HistoryStore):
     left_urls, right_urls = _source_urls(left), _source_urls(right)
     st.caption(f"Source URLs: {len(left_urls & right_urls)} shared · {len(left_urls - right_urls)} only in first · {len(right_urls - left_urls)} only in second.")
     st.caption("Source overlap uses exact available HTTP(S) URLs, not page-content equality. Budget usage counts saved reservations, not provider billing or token totals. This view does not score answer quality.")
+    st.download_button("Download comparison (.md)", comparison_markdown(first, left, second, right),
+                       file_name="research-comparison.md", mime="text/markdown",
+                       key="download_comparison")
     for column, result, label, other_urls in zip(st.columns(2), (left, right),
                                                 ("First run", "Second run"), (right_urls, left_urls)):
         with column:
