@@ -1153,6 +1153,16 @@ and effective limits. Changing the selector does not relabel an earlier result.
 Older history entries remain readable without invented mode information. CLI
 runs continue to use their configured budgets directly.
 
+## Offline answer-quality scenarios
+
+Run `python -m pytest tests/test_offline_evaluation.py -v` for eight fixed research
+scenarios covering grounded answers, citation provenance, semantic rejection,
+conflicting evidence, and insufficient evidence. They exercise the production
+graph with scripted providers and blocked network connections, using no quota.
+These are safeguard regression checks, not a benchmark of live Gemini quality:
+semantic verdicts and extracted evidence are supplied by the fixtures.
+See [the evaluation guide](evals/README.md) for case descriptions and report output.
+
 ## Saved research history
 
 Turn on **Compare saved runs**, then select two distinct entries to view their
