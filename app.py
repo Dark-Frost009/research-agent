@@ -51,7 +51,8 @@ st.write("Explore the web, compare evidence, and get a report checked against it
 if st.toggle("Offline demo", key="offline_demo", help="Explore a fictional sample without providers or API keys."):
     # Keep real widget values across Streamlit's cleanup of hidden widgets.
     # Real result objects and unsaved-work flags are never replaced by demo data.
-    for key in ("question", "research_depth", "history_search", "history_selection"):
+    for key in ("question", "research_depth", "history_search", "history_selection",
+                "history_status", "history_depth", "history_start", "history_end"):
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
     from research_agent.demo import render_demo
@@ -118,8 +119,30 @@ with st.sidebar:
     st.caption("Stored on this computer. Opening a report does not use Gemini.")
     search = st.text_input("Search saved research", key="history_search",
                            help="Search questions, report text, source titles, and evidence excerpts. Matches ignore letter case and use the exact text you enter.")
+    def clear_history_filters():
+        st.session_state["history_status"] = "All"
+        st.session_state["history_depth"] = "All"
+        st.session_state["history_start"] = None
+        st.session_state["history_end"] = None
+
+    with st.expander("Filter saved research"):
+        status_filter = st.radio("Run status", ("All", "Completed", "Incomplete"),
+                                 horizontal=True, key="history_status")
+        depth_filter = st.radio("Saved research depth", ("All", *DEPTH_NAMES, "Not recorded"),
+                                key="history_depth")
+        st.caption("Dates include both endpoints and use UTC. Older runs without a saved depth appear under Not recorded.")
+        start_date = st.date_input("From date (UTC)", value=None, key="history_start")
+        end_date = st.date_input("Through date (UTC)", value=None, key="history_end")
+        st.button("Clear history filters", key="clear_history_filters", on_click=clear_history_filters)
+    filters_active = status_filter != "All" or depth_filter != "All" or start_date or end_date
+    invalid_dates = start_date and end_date and start_date > end_date
+    if invalid_dates:
+        st.warning("From date must be on or before Through date.")
     try:
-        saved = history.list_reports(search)
+        saved = [] if invalid_dates else history.list_reports(
+            search, status=None if status_filter == "All" else status_filter.lower(),
+            depth=None if depth_filter == "All" else depth_filter,
+            start_date=start_date, end_date=end_date)
     except HistoryError:
         st.warning("Local history could not be read. You can still research and download reports.")
         saved = []
@@ -150,7 +173,7 @@ with st.sidebar:
                     st.session_state["saved_report_id"] = selected
                     st.session_state["history_save_failed"] = False
     else:
-        st.caption("No matching saved reports." if search.strip() else "Your completed reports will appear here.")
+        st.caption("No matching saved reports." if search.strip() or filters_active else "Your completed reports will appear here.")
     render_backup_controls(history)
 
 pending = unsaved_entries()

@@ -1155,6 +1155,14 @@ runs continue to use their configured budgets directly.
 
 ## Saved research history
 
+Expand **Filter saved research** to combine search with run status, saved research
+depth, and optional From/Through dates. Dates are inclusive and use UTC, matching
+the history labels. **Not recorded** finds older runs without depth metadata;
+it does not infer a mode from their budget. Invalid date ranges show a warning.
+**Clear history filters** resets these filters while keeping your search text.
+Filtering does not open a report, change unsaved work, or use provider quota.
+Unreadable depth metadata is excluded when a depth filter is selected.
+
 Use **Search saved research** in the sidebar to find text in saved questions,
 report bodies, source titles, or evidence excerpts, including incomplete runs.
 Search matches a literal substring, ignores letter case, and trims outer spaces;

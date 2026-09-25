@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
 import sqlite3
 from typing import Literal
@@ -158,14 +159,22 @@ class HistoryStore:
         except (OSError, sqlite3.Error, ValidationError) as exc:
             raise HistoryError("Could not save the report locally.") from exc
 
-    def list_reports(self, search: str = "") -> list[SavedReport]:
+    def list_reports(self, search: str = "", *, status: str | None = None,
+                     depth: str | None = None, start_date: date | None = None,
+                     end_date: date | None = None) -> list[SavedReport]:
+        if status not in (None, "completed", "incomplete"):
+            raise ValueError("Unknown history status filter.")
+        if depth not in (None, "Quick", "Standard", "Thorough", "Not recorded"):
+            raise ValueError("Unknown history depth filter.")
+        if start_date and end_date and start_date > end_date:
+            raise ValueError("Start date must be on or before end date.")
         if not self.path.exists():
             return []
         query = search.strip().casefold()
         try:
             with closing(self._connect()) as connection:
                 # Do not load report bodies for the ordinary unfiltered listing.
-                payload_column = ", payload" if query else ""
+                payload_column = ", payload" if query or depth else ""
                 rows = connection.execute(
                     "SELECT id, question, created_at, citation_count, 'completed'" + payload_column + " FROM reports "
                     "UNION ALL SELECT id, question, created_at, 0, 'incomplete'" + payload_column + " FROM incomplete_runs "
@@ -173,6 +182,29 @@ class HistoryStore:
                 )
                 matches = []
                 for row in rows:
+                    if status and row[4] != status:
+                        continue
+                    if start_date or end_date:
+                        try:
+                            created_at = datetime.fromisoformat(row[2])
+                            if created_at.tzinfo is None:
+                                continue
+                            saved_date = created_at.astimezone(timezone.utc).date()
+                        except (ValueError, TypeError):
+                            continue
+                        if ((start_date and saved_date < start_date)
+                                or (end_date and saved_date > end_date)):
+                            continue
+                    model = _Snapshot if row[4] == "completed" else IncompleteResearch
+                    snapshot = None
+                    if depth:
+                        try:
+                            snapshot = model.model_validate_json(row[5])
+                        except ValidationError:
+                            continue
+                        recorded_depth = snapshot.depth.name if snapshot.depth else "Not recorded"
+                        if recorded_depth != depth:
+                            continue
                     if not query:
                         matches.append(SavedReport(*row[:5]))
                         continue
@@ -180,9 +212,9 @@ class HistoryStore:
                     if question_match:
                         matches.append(SavedReport(*row[:5], match=question_match))
                         continue
-                    model = _Snapshot if row[4] == "completed" else IncompleteResearch
                     try:
-                        snapshot = model.model_validate_json(row[5])
+                        if snapshot is None:
+                            snapshot = model.model_validate_json(row[5])
                     except ValidationError:
                         # A damaged entry remains discoverable by question and
                         # must not prevent searching other saved research.
