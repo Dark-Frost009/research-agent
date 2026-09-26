@@ -72,6 +72,7 @@ def _settings(
     )
 
     return Settings(
+        _env_file=None,
         **values
     )
 
@@ -89,12 +90,25 @@ def _patch_dependencies(
             api_key: str | None = None,
             client: Any | None = None,
         ) -> None:
-            calls["gemini"] = {
+            record = {
                 "instance": self,
                 "model": model,
                 "api_key": api_key,
                 "client": client,
             }
+
+            calls.setdefault(
+                "gemini_clients",
+                [],
+            ).append(
+                record
+            )
+
+            # Preserve the original single-client test interface.
+            # When only one Gemini client is built, this is that client.
+            # When two clients are built, this points at the most recently
+            # constructed one while gemini_clients retains both.
+            calls["gemini"] = record
 
     class CapturingSearchClient:
         def __init__(
@@ -363,6 +377,10 @@ def test_build_research_context_builds_configured_providers(
         _settings()
     )
 
+    assert len(
+        calls["gemini_clients"]
+    ) == 1
+
     assert calls["gemini"][
         "model"
     ] == "gemini-test-model"
@@ -374,6 +392,138 @@ def test_build_research_context_builds_configured_providers(
     assert calls["search_client"][
         "api_key"
     ] == "search-secret"
+
+
+def test_role_specific_models_build_two_clients_and_route_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_dependencies(
+        monkeypatch
+    )
+
+    bootstrap.build_research_context(
+        _settings(
+            llm_model="legacy-model",
+            llm_worker_model="worker-model",
+            llm_final_model="final-model",
+        )
+    )
+
+    gemini_clients = calls[
+        "gemini_clients"
+    ]
+
+    assert len(
+        gemini_clients
+    ) == 2
+
+    worker_record = gemini_clients[0]
+    final_record = gemini_clients[1]
+
+    assert worker_record[
+        "model"
+    ] == "worker-model"
+
+    assert final_record[
+        "model"
+    ] == "final-model"
+
+    assert worker_record[
+        "api_key"
+    ] == "llm-secret"
+
+    assert final_record[
+        "api_key"
+    ] == "llm-secret"
+
+    worker_llm = worker_record[
+        "instance"
+    ]
+
+    final_llm = final_record[
+        "instance"
+    ]
+
+    assert worker_llm is not final_llm
+
+    assert calls["planner"][
+        "llm"
+    ] is worker_llm
+
+    assert calls[
+        "evidence_extractor"
+    ][
+        "llm"
+    ] is worker_llm
+
+    assert calls["critic"][
+        "llm"
+    ] is worker_llm
+
+    assert calls["synthesizer"][
+        "llm"
+    ] is final_llm
+
+
+def test_worker_model_with_legacy_final_fallback_routes_correctly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_dependencies(
+        monkeypatch
+    )
+
+    bootstrap.build_research_context(
+        _settings(
+            llm_model="legacy-final-model",
+            llm_worker_model="worker-model",
+            llm_final_model=None,
+        )
+    )
+
+    gemini_clients = calls[
+        "gemini_clients"
+    ]
+
+    assert len(
+        gemini_clients
+    ) == 2
+
+    worker_record = gemini_clients[0]
+    final_record = gemini_clients[1]
+
+    assert worker_record[
+        "model"
+    ] == "worker-model"
+
+    assert final_record[
+        "model"
+    ] == "legacy-final-model"
+
+    worker_llm = worker_record[
+        "instance"
+    ]
+
+    final_llm = final_record[
+        "instance"
+    ]
+
+    assert calls["planner"][
+        "llm"
+    ] is worker_llm
+
+    assert calls[
+        "evidence_extractor"
+    ][
+        "llm"
+    ] is worker_llm
+
+    assert calls["critic"][
+        "llm"
+    ] is worker_llm
+
+    assert calls["synthesizer"][
+        "llm"
+    ] is final_llm
 
 
 def test_build_research_context_maps_network_settings(
@@ -463,7 +613,7 @@ def test_build_research_context_maps_node_shaping_limits(
     ] == 3
 
 
-def test_all_llm_nodes_share_one_llm_client(
+def test_legacy_single_model_reuses_one_llm_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _patch_dependencies(
@@ -474,9 +624,15 @@ def test_all_llm_nodes_share_one_llm_client(
         _settings()
     )
 
+    assert len(
+        calls["gemini_clients"]
+    ) == 1
+
     llm = calls[
-        "gemini"
-    ]["instance"]
+        "gemini_clients"
+    ][0][
+        "instance"
+    ]
 
     assert calls["planner"][
         "llm"
@@ -484,7 +640,9 @@ def test_all_llm_nodes_share_one_llm_client(
 
     assert calls[
         "evidence_extractor"
-    ]["llm"] is llm
+    ][
+        "llm"
+    ] is llm
 
     assert calls["critic"][
         "llm"
@@ -508,15 +666,23 @@ def test_search_and_fetch_nodes_receive_provider_adapters(
 
     assert calls[
         "search_node"
-    ]["search_client"] is calls[
+    ][
         "search_client"
-    ]["instance"]
+    ] is calls[
+        "search_client"
+    ][
+        "instance"
+    ]
 
     assert calls[
         "source_fetcher"
-    ]["page_fetcher"] is calls[
+    ][
         "page_fetcher"
-    ]["instance"]
+    ] is calls[
+        "page_fetcher"
+    ][
+        "instance"
+    ]
 
 
 def test_evidence_collector_receives_evidence_extractor(
@@ -536,7 +702,9 @@ def test_evidence_collector_receives_evidence_extractor(
         "evidence_extractor"
     ] is calls[
         "evidence_extractor"
-    ]["instance"]
+    ][
+        "instance"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -578,7 +746,7 @@ def test_unsupported_llm_provider_fails_closed(
         "   ",
     ],
 )
-def test_missing_gemini_model_fails_closed(
+def test_missing_gemini_worker_model_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     model: str | None,
 ) -> None:
@@ -589,12 +757,38 @@ def test_missing_gemini_model_fails_closed(
     with pytest.raises(
         bootstrap.BootstrapConfigurationError,
         match=(
-            "llm_model must be configured"
+            "llm_worker_model or llm_model "
+            "must be configured"
         ),
     ):
         bootstrap.build_research_context(
             _settings(
-                llm_model=model
+                llm_model=model,
+                llm_worker_model=None,
+                llm_final_model=None,
+            )
+        )
+
+
+def test_missing_gemini_final_model_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch
+    )
+
+    with pytest.raises(
+        bootstrap.BootstrapConfigurationError,
+        match=(
+            "llm_final_model or llm_model "
+            "must be configured"
+        ),
+    ):
+        bootstrap.build_research_context(
+            _settings(
+                llm_model=None,
+                llm_worker_model="worker-model",
+                llm_final_model=None,
             )
         )
 
@@ -644,12 +838,16 @@ def test_missing_provider_api_keys_are_passed_as_none(
     )
 
     assert calls[
-        "gemini"
-    ]["api_key"] is None
+        "gemini_clients"
+    ][0][
+        "api_key"
+    ] is None
 
     assert calls[
         "search_client"
-    ]["api_key"] is None
+    ][
+        "api_key"
+    ] is None
 
 
 def test_build_research_application_returns_graph_and_context(
@@ -686,21 +884,27 @@ def test_build_research_application_returns_graph_and_context(
         application.context.search_node
         is calls[
             "search_node"
-        ]["instance"]
+        ][
+            "instance"
+        ]
     )
 
     assert (
         application.context.source_fetcher
         is calls[
             "source_fetcher"
-        ]["instance"]
+        ][
+            "instance"
+        ]
     )
 
     assert (
         application.context.evidence_collector
         is calls[
             "evidence_collector"
-        ]["instance"]
+        ][
+            "instance"
+        ]
     )
 
     assert (
@@ -712,5 +916,7 @@ def test_build_research_application_returns_graph_and_context(
         application.context.synthesizer
         is calls[
             "synthesizer"
-        ]["instance"]
+        ][
+            "instance"
+        ]
     )

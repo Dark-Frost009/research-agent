@@ -18,6 +18,7 @@ from research_agent.graph.nodes.critic import (
 from research_agent.graph.nodes.evidence import (
     EvidenceBatch,
     EvidenceCall,
+    EvidenceExtractionResult,
 )
 from research_agent.graph.nodes.evidence_collector import (
     EvidenceCollectionPlan,
@@ -56,14 +57,20 @@ from research_agent.models.schemas import (
 from research_agent.tools.web_extract import (
     FetchedPage,
 )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
 def _uninitialized(
     cls: type,
 ):
     """Create a real instance without invoking unrelated constructors."""
     return object.__new__(cls)
+
+
 def _policy(
     *,
     max_llm_calls_per_run: int = 20,
@@ -82,12 +89,16 @@ def _policy(
             ),
         )
     )
+
+
 def _authorized_iteration() -> BudgetAuthorization:
     return BudgetAuthorization(
         resource="research_iterations",
         requested=1,
         authorized=1,
     )
+
+
 def _sub_question(
     index: int,
 ) -> SubQuestion:
@@ -97,6 +108,8 @@ def _sub_question(
         rationale="Needed for research.",
         created_at_iteration=0,
     )
+
+
 def _search_result(
     *,
     sub_question: SubQuestion,
@@ -107,6 +120,8 @@ def _search_result(
         url=f"https://source-{index}.example.com/article",
         title=f"Source {index}",
     )
+
+
 def _pending_source(
     result: SearchResult,
 ) -> Source:
@@ -117,6 +132,8 @@ def _pending_source(
     source = sources[0]
     assert source.fetch_status == "pending"
     return source
+
+
 def _source_batch(
     sources: list[Source],
 ) -> SourceBatch:
@@ -130,6 +147,8 @@ def _source_batch(
             authorized=len(sources),
         ),
     )
+
+
 def _fetch_batch(
     sources: list[Source],
 ) -> SourceFetchBatch:
@@ -143,6 +162,8 @@ def _fetch_batch(
             authorized=len(sources),
         ),
     )
+
+
 def _successful_fetch_result(
     *,
     source: Source,
@@ -185,6 +206,8 @@ def _successful_fetch_result(
     )
     assert result.succeeded
     return result
+
+
 def _failed_fetch_result(
     *,
     source: Source,
@@ -209,6 +232,8 @@ def _failed_fetch_result(
         page=None,
         error="simulated fetch failure",
     )
+
+
 def _scenario(
     count: int,
     *,
@@ -266,8 +291,11 @@ def _scenario(
         ),
         fetch_results,
     )
+
+
 class RecordingEvidenceExtractor:
     """Deterministic EvidenceExtractionService test double."""
+
     def __init__(
         self,
         *,
@@ -281,10 +309,11 @@ class RecordingEvidenceExtractor:
         self.calls: list[EvidenceCall] = []
         self.before_call = before_call
         self.error = error
+
     def extract(
         self,
         call: EvidenceCall,
-    ) -> list[Evidence]:
+    ) -> EvidenceExtractionResult:
         if self.before_call is not None:
             self.before_call(
                 call
@@ -304,27 +333,33 @@ class RecordingEvidenceExtractor:
                 excerpt = line
                 break
         assert excerpt
-        return [
-            Evidence(
-                id=f"ev-{len(self.calls)}",
-                source_id=(
-                    call.fetch_result.source.id
-                ),
-                sub_question_id=(
-                    call.sub_question.id
-                ),
-                excerpt=excerpt,
-                relevance_note=(
-                    "Relevant to the sub-question."
-                ),
-            )
-        ]
+        return EvidenceExtractionResult(
+            evidence=[
+                Evidence(
+                    id=f"ev-{len(self.calls)}",
+                    source_id=(
+                        call.fetch_result.source.id
+                    ),
+                    sub_question_id=(
+                        call.sub_question.id
+                    ),
+                    excerpt=excerpt,
+                    relevance_note=(
+                        "Relevant to the sub-question."
+                    ),
+                )
+            ],
+        )
+
+
 def _collector(
     extractor: RecordingEvidenceExtractor,
 ) -> EvidenceCollector:
     return EvidenceCollector(
         evidence_extractor=extractor
     )
+
+
 def _context(
     *,
     extractor: RecordingEvidenceExtractor | None = None,
@@ -358,6 +393,8 @@ def _context(
             Synthesizer
         ),
     )
+
+
 def _state(
     *,
     iteration_count: int = 1,
@@ -386,12 +423,16 @@ def _state(
         "final_report": None,
         "errors": [],
     }
+
+
 def _runtime(
     context: ResearchGraphContext,
 ) -> Runtime[ResearchGraphContext]:
     return Runtime(
         context=context
     )
+
+
 def _activate_iteration(
     context: ResearchGraphContext,
     *,
@@ -413,6 +454,8 @@ def _activate_iteration(
             sources
         )
     )
+
+
 def _prepare_plan(
     *,
     context: ResearchGraphContext,
@@ -431,6 +474,8 @@ def _prepare_plan(
         EvidenceCollectionPlan,
     )
     return plan
+
+
 def _install_completed_fetch_handoff(
     context: ResearchGraphContext,
     *,
@@ -443,9 +488,13 @@ def _install_completed_fetch_handoff(
     context.workspace.source_fetch_results = list(
         fetch_results
     )
+
+
 # ---------------------------------------------------------------------------
 # Evidence collection planning
 # ---------------------------------------------------------------------------
+
+
 def test_prepare_evidence_collection_plan_is_pure() -> None:
     (
         sub_questions,
@@ -477,6 +526,8 @@ def test_prepare_evidence_collection_plan_is_pure() -> None:
     assert update == {}
     assert state == before
     assert extractor.calls == []
+
+
 def test_prepare_evidence_collection_plan_uses_current_iteration_only() -> None:
     (
         current_sub_questions,
@@ -528,6 +579,8 @@ def test_prepare_evidence_collection_plan_uses_current_iteration_only() -> None:
     assert list(
         plan.sources
     ) == current_sources
+
+
 def test_prepare_evidence_collection_plan_preserves_current_source_order() -> None:
     (
         sub_questions,
@@ -552,6 +605,8 @@ def test_prepare_evidence_collection_plan_preserves_current_source_order() -> No
     assert list(
         plan.sources
     ) == sources
+
+
 def test_prepare_evidence_collection_plan_rejects_duplicate_preparation() -> None:
     (
         sub_questions,
@@ -585,6 +640,8 @@ def test_prepare_evidence_collection_plan_rejects_duplicate_preparation() -> Non
             state,
             _runtime(context),
         )
+
+
 def test_prepare_evidence_collection_plan_requires_current_sub_questions() -> None:
     context = _context()
     context.workspace.iteration_authorization = (
@@ -605,6 +662,8 @@ def test_prepare_evidence_collection_plan_requires_current_sub_questions() -> No
             _state(),
             _runtime(context),
         )
+
+
 def test_prepare_evidence_collection_plan_requires_current_search_results() -> None:
     context = _context()
     context.workspace.iteration_authorization = (
@@ -625,6 +684,8 @@ def test_prepare_evidence_collection_plan_requires_current_search_results() -> N
             _state(),
             _runtime(context),
         )
+
+
 def test_prepare_evidence_collection_plan_requires_current_source_batch() -> None:
     context = _context()
     context.workspace.iteration_authorization = (
@@ -643,9 +704,13 @@ def test_prepare_evidence_collection_plan_requires_current_source_batch() -> Non
             _state(),
             _runtime(context),
         )
+
+
 # ---------------------------------------------------------------------------
 # Evidence reservation
 # ---------------------------------------------------------------------------
+
+
 def test_reserve_evidence_extraction_prepares_requests_without_llm_calls() -> None:
     (
         sub_questions,
@@ -704,6 +769,8 @@ def test_reserve_evidence_extraction_prepares_requests_without_llm_calls() -> No
     assert len(
         batch.calls
     ) == 2
+
+
 def test_reserve_evidence_extraction_authorizes_aggregate_llm_usage() -> None:
     (
         sub_questions,
@@ -746,6 +813,8 @@ def test_reserve_evidence_extraction_authorizes_aggregate_llm_usage() -> None:
     assert batch.authorized == 3
     assert batch.skipped == 0
     assert batch.llm_calls_used == 3
+
+
 def test_reserve_evidence_extraction_respects_finalization_reserve() -> None:
     (
         sub_questions,
@@ -803,6 +872,8 @@ def test_reserve_evidence_extraction_respects_finalization_reserve() -> None:
         False,
         False,
     ]
+
+
 def test_reserve_evidence_extraction_preserves_worker_order_under_partial_budget() -> None:
     (
         sub_questions,
@@ -858,6 +929,8 @@ def test_reserve_evidence_extraction_preserves_worker_order_under_partial_budget
         False,
         False,
     ]
+
+
 def test_blank_page_requires_zero_llm_budget() -> None:
     (
         sub_questions,
@@ -912,6 +985,8 @@ def test_blank_page_requires_zero_llm_budget() -> None:
     ) == 1
     assert not batch.calls[0].authorized
     assert extractor.calls == []
+
+
 def test_failed_fetch_creates_no_evidence_request() -> None:
     (
         sub_questions,
@@ -962,6 +1037,8 @@ def test_failed_fetch_creates_no_evidence_request() -> None:
         "llm_calls_used": 0
     }
     assert batch.calls == ()
+
+
 def test_reserve_evidence_extraction_requires_completed_fetch_batch() -> None:
     (
         sub_questions,
@@ -998,6 +1075,8 @@ def test_reserve_evidence_extraction_requires_completed_fetch_batch() -> None:
             state,
             _runtime(context),
         )
+
+
 def test_reserve_evidence_extraction_requires_fetch_results() -> None:
     (
         sub_questions,
@@ -1034,6 +1113,8 @@ def test_reserve_evidence_extraction_requires_fetch_results() -> None:
             state,
             _runtime(context),
         )
+
+
 def test_reserve_evidence_extraction_rejects_duplicate_preparation() -> None:
     (
         sub_questions,
@@ -1076,9 +1157,13 @@ def test_reserve_evidence_extraction_rejects_duplicate_preparation() -> None:
             state,
             _runtime(context),
         )
+
+
 # ---------------------------------------------------------------------------
 # Evidence execution
 # ---------------------------------------------------------------------------
+
+
 def test_execute_evidence_extraction_returns_durable_deltas() -> None:
     (
         sub_questions,
@@ -1153,11 +1238,14 @@ def test_execute_evidence_extraction_returns_durable_deltas() -> None:
     assert len(
         extractor.calls
     ) == 2
+
+
 def test_execute_evidence_extraction_consumes_batch_before_first_llm_call() -> None:
     holder: dict[
         str,
         ResearchGraphContext,
     ] = {}
+
     def assert_consumed(
         call: EvidenceCall,
     ) -> None:
@@ -1220,6 +1308,8 @@ def test_execute_evidence_extraction_consumes_batch_before_first_llm_call() -> N
     assert len(
         extractor.calls
     ) == 2
+
+
 def test_execute_evidence_extraction_cannot_reuse_consumed_batch() -> None:
     (
         sub_questions,
@@ -1275,6 +1365,8 @@ def test_execute_evidence_extraction_cannot_reuse_consumed_batch() -> None:
             state,
             _runtime(context),
         )
+
+
 def test_execute_evidence_extraction_consumes_batch_when_extractor_raises() -> None:
     extractor = RecordingEvidenceExtractor(
         error=RuntimeError(
@@ -1344,6 +1436,8 @@ def test_execute_evidence_extraction_consumes_batch_when_extractor_raises() -> N
             state,
             _runtime(context),
         )
+
+
 def test_execute_evidence_extraction_runs_only_authorized_workers() -> None:
     extractor = RecordingEvidenceExtractor()
     (
@@ -1402,6 +1496,8 @@ def test_execute_evidence_extraction_runs_only_authorized_workers() -> None:
     assert len(
         update["evidence"]
     ) == 1
+
+
 def test_blank_page_executes_no_extractor_call() -> None:
     extractor = RecordingEvidenceExtractor()
     (
@@ -1450,6 +1546,8 @@ def test_blank_page_executes_no_extractor_call() -> None:
     )
     assert extractor.calls == []
     assert update["evidence"] == []
+
+
 def test_raw_page_text_remains_transient_after_evidence_execution() -> None:
     extractor = RecordingEvidenceExtractor()
     (
@@ -1514,6 +1612,8 @@ def test_raw_page_text_remains_transient_after_evidence_execution() -> None:
     )
     assert "source_fetch_results" not in update
     assert "page" not in update
+
+
 def test_execute_evidence_extraction_requires_preparation() -> None:
     context = _context()
     with pytest.raises(
@@ -1527,6 +1627,8 @@ def test_execute_evidence_extraction_requires_preparation() -> None:
             _state(),
             _runtime(context),
         )
+
+
 def test_execute_evidence_extraction_requires_batch() -> None:
     (
         sub_questions,
@@ -1570,6 +1672,8 @@ def test_execute_evidence_extraction_requires_batch() -> None:
             state,
             _runtime(context),
         )
+
+
 def test_evidence_orchestration_rejects_wrong_runtime_context() -> None:
     runtime = Runtime(
         context=object()

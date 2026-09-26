@@ -24,6 +24,19 @@ Evidence requirements:
 - Return only evidence that is relevant to the research sub-question.
 - Every excerpt must be taken directly from the supplied webpage text.
 - Do not invent, paraphrase, summarize, or rewrite an excerpt.
+- Each excerpt must be one contiguous, character-for-character substring
+  copied from the supplied webpage text.
+- Preserve the exact wording, capitalization, punctuation, Unicode
+  characters, and internal spacing present in the webpage text.
+- Do not add quotation marks, ellipses, corrections, labels, omitted-word
+  markers, or other characters unless they already appear in the copied
+  source passage.
+- Do not combine text from separate parts of the webpage into one excerpt.
+- Before returning an excerpt, verify that the complete excerpt can be
+  found exactly in the supplied webpage text.
+- Prefer a small number of high-value excerpts over many weak excerpts.
+- If a useful passage cannot be copied exactly, omit that passage rather
+  than rewriting or approximating it.
 - Keep excerpts concise while preserving enough context to understand them.
 - Include a short relevance note explaining why each excerpt matters.
 - Do not create IDs, source IDs, citations, URLs, or internal metadata.

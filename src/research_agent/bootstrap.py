@@ -116,10 +116,10 @@ def _build_budget_policy(
     )
 
 
-def _build_llm(
+def _validate_llm_provider(
     settings: Settings,
-) -> GeminiLLMClient:
-    """Build the configured production LLM client."""
+) -> None:
+    """Validate the production LLM provider once before client creation."""
 
     provider = (
         settings.llm_provider or ""
@@ -131,20 +131,110 @@ def _build_llm(
             "Production currently supports 'gemini'."
         )
 
-    model = (
-        settings.llm_model or ""
+
+def _build_llm(
+    settings: Settings,
+    *,
+    model: str | None = None,
+    setting_name: str = "llm_model",
+) -> GeminiLLMClient:
+    """Build one configured production Gemini client.
+
+    ``model`` allows the composition root to create separate clients for
+    worker-stage and finalization-stage responsibilities.
+
+    When omitted, the legacy ``llm_model`` setting is used so existing
+    callers and configuration remain backward compatible.
+    """
+
+    _validate_llm_provider(
+        settings
+    )
+
+    resolved_model = (
+        model
+        if model is not None
+        else settings.llm_model
+    )
+
+    clean_model = (
+        resolved_model or ""
     ).strip()
 
-    if not model:
+    if not clean_model:
         raise BootstrapConfigurationError(
-            "llm_model must be configured for Gemini."
+            f"{setting_name} must be configured for Gemini."
         )
 
     return GeminiLLMClient(
-        model=model,
+        model=clean_model,
         api_key=_secret_value(
             settings.llm_api_key
         ),
+    )
+
+
+def _build_llm_clients(
+    settings: Settings,
+) -> tuple[
+    GeminiLLMClient,
+    GeminiLLMClient,
+]:
+    """Build worker and finalization LLM clients.
+
+    Worker model responsibilities:
+    - planning
+    - evidence extraction
+    - critique
+
+    Final model responsibilities:
+    - synthesis
+    - semantic verification performed through the synthesis service
+
+    If both roles resolve to the same model, the same client instance is
+    reused. This preserves the previous single-client behavior when only
+    LLM_MODEL is configured.
+    """
+
+    worker_model = (
+        settings.worker_llm_model or ""
+    ).strip()
+
+    final_model = (
+        settings.final_llm_model or ""
+    ).strip()
+
+    if not worker_model:
+        raise BootstrapConfigurationError(
+            "llm_worker_model or llm_model must be configured for Gemini."
+        )
+
+    if not final_model:
+        raise BootstrapConfigurationError(
+            "llm_final_model or llm_model must be configured for Gemini."
+        )
+
+    worker_llm = _build_llm(
+        settings,
+        model=worker_model,
+        setting_name="llm_worker_model or llm_model",
+    )
+
+    if final_model == worker_model:
+        return (
+            worker_llm,
+            worker_llm,
+        )
+
+    final_llm = _build_llm(
+        settings,
+        model=final_model,
+        setting_name="llm_final_model or llm_model",
+    )
+
+    return (
+        worker_llm,
+        final_llm,
     )
 
 
@@ -204,7 +294,10 @@ def build_research_context(
             "settings must be a Settings object."
         )
 
-    llm = _build_llm(
+    (
+        worker_llm,
+        final_llm,
+    ) = _build_llm_clients(
         settings
     )
 
@@ -221,7 +314,7 @@ def build_research_context(
     )
 
     planner = Planner(
-        llm=llm,
+        llm=worker_llm,
         max_sub_questions=(
             settings.max_sub_questions
         ),
@@ -242,7 +335,7 @@ def build_research_context(
 
     evidence_extractor = (
         EvidenceExtractor(
-            llm=llm
+            llm=worker_llm
         )
     )
 
@@ -255,7 +348,7 @@ def build_research_context(
     )
 
     critic = Critic(
-        llm=llm,
+        llm=worker_llm,
         # Critic follow-ups become next-iteration search queries, so
         # their shaping ceiling is the per-iteration search-query limit.
         max_follow_up_questions=(
@@ -264,7 +357,7 @@ def build_research_context(
     )
 
     synthesizer = Synthesizer(
-        llm=llm
+        llm=final_llm
     )
 
     return ResearchGraphContext(

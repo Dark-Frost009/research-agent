@@ -61,6 +61,8 @@ from typing import Protocol
 from research_agent.graph.nodes.evidence import (
     EvidenceBatch,
     EvidenceCall,
+    EvidenceExtractionResult,
+    EvidenceGroundingError,
     EvidenceRequest,
 )
 from research_agent.graph.nodes.source_fetcher import (
@@ -85,7 +87,7 @@ class EvidenceExtractionService(Protocol):
     def extract(
         self,
         call: EvidenceCall,
-    ) -> list[Evidence]:
+    ) -> EvidenceExtractionResult:
         """Extract grounded evidence from one authorized worker call."""
 
         ...
@@ -186,9 +188,7 @@ class EvidenceCollectionPlan:
             for source in self.sources
         }
 
-        seen_source_ids: set[
-            str
-        ] = set()
+        seen_source_ids: set[str] = set()
 
         for relationship in self.relationships:
             if (
@@ -247,13 +247,9 @@ class EvidenceCollectionPlan:
                     "at least one related SubQuestion."
                 )
 
-            seen_sub_question_ids: set[
-                str
-            ] = set()
+            seen_sub_question_ids: set[str] = set()
 
-            for sub_question_id in (
-                sub_question_ids
-            ):
+            for sub_question_id in sub_question_ids:
                 if not isinstance(
                     sub_question_id,
                     str,
@@ -853,7 +849,7 @@ class EvidenceCollector:
                 continue
 
             try:
-                extracted = (
+                extraction_result = (
                     self._evidence_extractor.extract(
                         call
                     )
@@ -875,12 +871,45 @@ class EvidenceCollector:
                 continue
 
             if not isinstance(
+                extraction_result,
+                EvidenceExtractionResult,
+            ):
+                raise TypeError(
+                    "evidence_extractor must return an "
+                    "EvidenceExtractionResult."
+                )
+
+            extracted = (
+                extraction_result.evidence
+            )
+
+            if (
+                extraction_result.grounding_rejections
+                > 0
+            ):
+                errors.append(
+                    self._format_evidence_error(
+                        source=(
+                            call.fetch_result.source
+                        ),
+                        sub_question=(
+                            call.sub_question
+                        ),
+                        error=EvidenceGroundingError(
+                            "One or more proposed evidence "
+                            "excerpts did not exist verbatim "
+                            "in the fetched webpage."
+                        ),
+                    )
+                )
+
+            if not isinstance(
                 extracted,
                 list,
             ):
                 raise TypeError(
-                    "evidence_extractor must "
-                    "return a list."
+                    "EvidenceExtractionResult.evidence "
+                    "must be a list."
                 )
 
             for item in extracted:

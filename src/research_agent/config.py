@@ -19,6 +19,15 @@ are still accepted as environment/input aliases for:
     max_search_queries_per_run
     max_sources_per_run
 
+The legacy LLM_MODEL setting is also retained. New deployments may
+configure separate worker and finalization models with:
+
+    LLM_WORKER_MODEL
+    LLM_FINAL_MODEL
+
+When either role-specific model is not configured, it falls back to
+LLM_MODEL.
+
 New code should use the explicit field names.
 """
 
@@ -53,13 +62,29 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     log_level: str = "INFO"
+    public_demo_only: bool = False
 
     # ------------------------------------------------------------------
     # LLM
     # ------------------------------------------------------------------
 
     llm_provider: Optional[str] = None
+
+    # Legacy single-model setting.
+    #
+    # Existing .env files using LLM_MODEL continue to work. When a
+    # role-specific model is not configured, that role falls back to
+    # this value.
     llm_model: Optional[str] = None
+
+    # Model used for optional/high-volume research work such as
+    # planning, evidence extraction, and critique.
+    llm_worker_model: Optional[str] = None
+
+    # Model used for the protected finalization path such as synthesis
+    # and semantic verification.
+    llm_final_model: Optional[str] = None
+
     llm_api_key: Optional[SecretStr] = None
 
     # ------------------------------------------------------------------
@@ -193,6 +218,22 @@ class Settings(BaseSettings):
             )
 
         return self
+
+    # ------------------------------------------------------------------
+    # Effective LLM model selection
+    # ------------------------------------------------------------------
+
+    @property
+    def worker_llm_model(self) -> Optional[str]:
+        """Return the configured model for research-stage LLM work."""
+
+        return self.llm_worker_model or self.llm_model
+
+    @property
+    def final_llm_model(self) -> Optional[str]:
+        """Return the configured model for finalization-stage LLM work."""
+
+        return self.llm_final_model or self.llm_model
 
     # ------------------------------------------------------------------
     # Transitional compatibility properties

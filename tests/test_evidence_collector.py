@@ -1,53 +1,63 @@
 """Tests for staged multi-source grounded evidence collection.
-
 The collector deliberately separates:
-
 1. structural planning
 2. completed authorized source fetches
 3. transient EvidenceRequest construction
 4. already-authorized evidence extraction
 5. persistent collection results
-
 No real network or LLM calls occur in this test module.
 """
 
 from dataclasses import FrozenInstanceError
+
 from datetime import datetime, timezone
 
 import pytest
 
 from research_agent.graph.budget import (
+
     BudgetAuthorization,
 )
+
 from research_agent.graph.nodes.evidence import (
+
     EvidenceBatch,
     EvidenceCall,
+    EvidenceExtractionResult,
     EvidenceRequest,
 )
+
 from research_agent.graph.nodes.evidence_collector import (
+
     EvidenceCollectionPlan,
     EvidenceCollectionPreparation,
     EvidenceCollectionResult,
     EvidenceCollector,
 )
+
 from research_agent.graph.nodes.source_fetcher import (
+
     SourceFetchBatch,
     SourceFetchResult,
 )
+
 from research_agent.llm.client import (
+
     LLMResponseError,
 )
+
 from research_agent.models.schemas import (
+
     Evidence,
     SearchResult,
     Source,
     SubQuestion,
 )
+
 from research_agent.tools.web_extract import (
+
     FetchedPage,
 )
-
-
 FIXED_TIME = datetime(
     2026,
     9,
@@ -59,7 +69,11 @@ FIXED_TIME = datetime(
 
 
 # ---------------------------------------------------------------------------
+
+
 # Helpers
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +138,6 @@ def _successful_fetch(
     final_url: str | None = None,
 ) -> SourceFetchResult:
     data = source.model_dump()
-
     data.update(
         {
             "fetch_status": "success",
@@ -137,11 +150,9 @@ def _successful_fetch(
             ),
         }
     )
-
     updated_source = Source.model_validate(
         data
     )
-
     page = FetchedPage(
         requested_url=source.url,
         final_url=(
@@ -152,7 +163,6 @@ def _successful_fetch(
         content_type="text/html",
         text=text,
     )
-
     return SourceFetchResult(
         source=updated_source,
         page=page,
@@ -166,7 +176,6 @@ def _failed_fetch(
     error: str | None = "PageFetchError: failed",
 ) -> SourceFetchResult:
     data = source.model_dump()
-
     data.update(
         {
             "fetch_status": "failed",
@@ -175,11 +184,9 @@ def _failed_fetch(
             "final_url": None,
         }
     )
-
     updated_source = Source.model_validate(
         data
     )
-
     return SourceFetchResult(
         source=updated_source,
         page=None,
@@ -203,6 +210,16 @@ def _evidence(
     )
 
 
+def _extraction_result(
+    *evidence: Evidence,
+    grounding_rejections: int = 0,
+) -> EvidenceExtractionResult:
+    return EvidenceExtractionResult(
+        evidence=list(evidence),
+        grounding_rejections=grounding_rejections,
+    )
+
+
 def _fetch_batch(
     sources: list[Source],
     *,
@@ -211,10 +228,8 @@ def _fetch_batch(
     requested = len(
         sources
     )
-
     if authorized is None:
         authorized = requested
-
     return SourceFetchBatch(
         sources=tuple(
             sources[
@@ -259,16 +274,12 @@ def _evidence_batch(
         for request in requests
         if request.requires_llm
     )
-
     if authorized is None:
         authorized = requested
-
     permits_remaining = (
         authorized
     )
-
     calls = []
-
     for request in requests:
         if not request.requires_llm:
             authorization = (
@@ -277,7 +288,6 @@ def _evidence_batch(
                     authorized=0,
                 )
             )
-
         elif permits_remaining > 0:
             authorization = (
                 _child_llm_authorization(
@@ -285,9 +295,7 @@ def _evidence_batch(
                     authorized=1,
                 )
             )
-
             permits_remaining -= 1
-
         else:
             authorization = (
                 _child_llm_authorization(
@@ -299,14 +307,12 @@ def _evidence_batch(
                     ),
                 )
             )
-
         calls.append(
             EvidenceCall(
                 request=request,
                 authorization=authorization,
             )
         )
-
     return EvidenceBatch(
         calls=tuple(
             calls
@@ -327,7 +333,6 @@ def _evidence_batch(
 
 class FakeEvidenceExtractor:
     """Fake already-authorized evidence extraction service."""
-
     def __init__(
         self,
         responses=None,
@@ -336,9 +341,7 @@ class FakeEvidenceExtractor:
             responses
             or {}
         )
-
         self.calls = []
-
     def extract(
         self,
         call: EvidenceCall,
@@ -347,22 +350,20 @@ class FakeEvidenceExtractor:
             call.fetch_result.source.id,
             call.sub_question.id,
         )
-
         self.calls.append(
             key
         )
-
         response = self.responses.get(
             key,
-            [],
+            EvidenceExtractionResult(
+                evidence=[],
+            ),
         )
-
         if isinstance(
             response,
             Exception,
         ):
             raise response
-
         return response
 
 
@@ -388,13 +389,11 @@ def _single_plan(
         sub_question = _sub_question(
             id="sq_one",
         )
-
     if source is None:
         source = _source(
             id="src_one",
             url="https://example.com/article",
         )
-
     return _collector().plan(
         sub_questions=[
             sub_question,
@@ -414,7 +413,11 @@ def _single_plan(
 
 
 # ---------------------------------------------------------------------------
+
+
 # EvidenceCollectionResult
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -424,7 +427,6 @@ def test_collection_result_is_frozen():
         evidence=[],
         errors=[],
     )
-
     with pytest.raises(
         FrozenInstanceError
     ):
@@ -439,27 +441,22 @@ def test_collection_result_contains_no_transient_page_fields():
         evidence=[],
         errors=[],
     )
-
     assert not hasattr(
         result,
         "page",
     )
-
     assert not hasattr(
         result,
         "pages",
     )
-
     assert not hasattr(
         result,
         "page_text",
     )
-
     assert not hasattr(
         result,
         "fetch_results",
     )
-
     assert not hasattr(
         result,
         "requests",
@@ -467,7 +464,11 @@ def test_collection_result_contains_no_transient_page_fields():
 
 
 # ---------------------------------------------------------------------------
+
+
 # Structural planning
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -477,7 +478,6 @@ def test_empty_inputs_create_empty_plan():
         search_results=[],
         sources=[],
     )
-
     assert plan.sub_questions == ()
     assert plan.sources == ()
     assert plan.relationships == ()
@@ -536,6 +536,8 @@ def test_empty_inputs_create_empty_plan():
         ),
     ],
 )
+
+
 def test_plan_inputs_must_be_lists(
     field_name,
     value,
@@ -545,11 +547,9 @@ def test_plan_inputs_must_be_lists(
         "search_results": [],
         "sources": [],
     }
-
     kwargs[
         field_name
     ] = value
-
     with pytest.raises(
         TypeError
     ):
@@ -602,12 +602,10 @@ def test_duplicate_sub_question_ids_are_rejected():
         id="sq_same",
         question="Question one?",
     )
-
     second = _sub_question(
         id="sq_same",
         question="Question two?",
     )
-
     with pytest.raises(
         ValueError,
         match="Duplicate SubQuestion",
@@ -627,12 +625,10 @@ def test_duplicate_source_ids_are_rejected():
         id="src_same",
         url="https://example.com/a",
     )
-
     second = _source(
         id="src_same",
         url="https://example.com/b",
     )
-
     with pytest.raises(
         ValueError,
         match="Duplicate Source IDs",
@@ -652,7 +648,6 @@ def test_duplicate_normalized_source_urls_are_rejected():
         id="src_one",
         url="https://example.com/article",
     )
-
     second = _source(
         id="src_two",
         url=(
@@ -660,7 +655,6 @@ def test_duplicate_normalized_source_urls_are_rejected():
             "article#section"
         ),
     )
-
     with pytest.raises(
         ValueError,
         match="Duplicate Source URLs",
@@ -683,6 +677,8 @@ def test_duplicate_normalized_source_urls_are_rejected():
         "skipped",
     ],
 )
+
+
 def test_plan_accepts_only_pending_sources(
     status,
 ):
@@ -691,7 +687,6 @@ def test_plan_accepts_only_pending_sources(
         url="https://example.com/article",
         fetch_status=status,
     )
-
     with pytest.raises(
         ValueError,
         match="pending Sources",
@@ -727,7 +722,6 @@ def test_every_source_must_have_search_result_relationship():
         id="src_one",
         url="https://example.com/article",
     )
-
     with pytest.raises(
         ValueError,
         match="at least one SearchResult",
@@ -747,12 +741,10 @@ def test_equivalent_search_result_url_matches_source():
             id="sq_one",
         )
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _collector().plan(
         sub_questions=[
             sub_question,
@@ -770,7 +762,6 @@ def test_equivalent_search_result_url_matches_source():
             source,
         ],
     )
-
     assert (
         plan.relationships
         == (
@@ -788,12 +779,10 @@ def test_duplicate_search_results_do_not_duplicate_relationship():
     sub_question = _sub_question(
         id="sq_one",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _collector().plan(
         sub_questions=[
             sub_question,
@@ -814,7 +803,6 @@ def test_duplicate_search_results_do_not_duplicate_relationship():
             source,
         ],
     )
-
     assert (
         plan.related_sub_question_ids(
             "src_one"
@@ -829,16 +817,13 @@ def test_relationship_order_preserves_search_discovery_order():
     sq_one = _sub_question(
         id="sq_one",
     )
-
     sq_two = _sub_question(
         id="sq_two",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _collector().plan(
         sub_questions=[
             sq_one,
@@ -858,7 +843,6 @@ def test_relationship_order_preserves_search_discovery_order():
             source,
         ],
     )
-
     assert (
         plan.related_sub_question_ids(
             "src_one"
@@ -872,7 +856,6 @@ def test_relationship_order_preserves_search_discovery_order():
 
 def test_collection_plan_is_frozen():
     plan = _single_plan()
-
     with pytest.raises(
         FrozenInstanceError
     ):
@@ -880,7 +863,11 @@ def test_collection_plan_is_frozen():
 
 
 # ---------------------------------------------------------------------------
+
+
 # Fetch-result preparation
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -889,23 +876,19 @@ def test_successful_fetch_creates_evidence_request():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     batch = _fetch_batch(
         [
             source,
         ]
     )
-
     fetch_result = (
         _successful_fetch(
             source
         )
     )
-
     preparation = (
         _collector().prepare_evidence_requests(
             plan=plan,
@@ -915,31 +898,25 @@ def test_successful_fetch_creates_evidence_request():
             ],
         )
     )
-
     assert preparation.sources == (
         fetch_result.source,
     )
-
     assert len(
         preparation.requests
     ) == 1
-
     request = (
         preparation.requests[
             0
         ]
     )
-
     assert (
         request.sub_question.id
         == "sq_one"
     )
-
     assert (
         request.fetch_result
         is fetch_result
     )
-
     assert preparation.errors == ()
 
 
@@ -947,18 +924,14 @@ def test_same_source_for_multiple_questions_creates_ordered_requests():
     sq_one = _sub_question(
         id="sq_one",
     )
-
     sq_two = _sub_question(
         id="sq_two",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     collector = _collector()
-
     plan = collector.plan(
         sub_questions=[
             sq_one,
@@ -978,7 +951,6 @@ def test_same_source_for_multiple_questions_creates_ordered_requests():
             source,
         ],
     )
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -994,7 +966,6 @@ def test_same_source_for_multiple_questions_creates_ordered_requests():
             ],
         )
     )
-
     assert [
         request.sub_question.id
         for request
@@ -1010,11 +981,9 @@ def test_failed_fetch_creates_error_and_no_request():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     failed = _failed_fetch(
         source,
         error=(
@@ -1022,7 +991,6 @@ def test_failed_fetch_creates_error_and_no_request():
             "connection failed"
         ),
     )
-
     preparation = (
         _collector().prepare_evidence_requests(
             plan=plan,
@@ -1036,25 +1004,20 @@ def test_failed_fetch_creates_error_and_no_request():
             ],
         )
     )
-
     assert preparation.sources == (
         failed.source,
     )
-
     assert (
         preparation.requests
         == ()
     )
-
     assert len(
         preparation.errors
     ) == 1
-
     assert (
         "src_one"
         in preparation.errors[0]
     )
-
     assert (
         "PageFetchError: connection failed"
         in preparation.errors[0]
@@ -1066,11 +1029,9 @@ def test_failed_fetch_without_message_uses_fallback_error():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     preparation = (
         _collector().prepare_evidence_requests(
             plan=plan,
@@ -1087,7 +1048,6 @@ def test_failed_fetch_without_message_uses_fallback_error():
             ],
         )
     )
-
     assert (
         "without an error message"
         in preparation.errors[0]
@@ -1098,19 +1058,15 @@ def test_failed_source_does_not_stop_later_successful_source():
     sub_question = _sub_question(
         id="sq_one",
     )
-
     bad_source = _source(
         id="src_bad",
         url="https://bad.example.com/article",
     )
-
     good_source = _source(
         id="src_good",
         url="https://good.example.com/article",
     )
-
     collector = _collector()
-
     plan = collector.plan(
         sub_questions=[
             sub_question,
@@ -1130,13 +1086,11 @@ def test_failed_source_does_not_stop_later_successful_source():
             good_source,
         ],
     )
-
     good_fetch = (
         _successful_fetch(
             good_source
         )
     )
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -1154,15 +1108,12 @@ def test_failed_source_does_not_stop_later_successful_source():
             ],
         )
     )
-
     assert len(
         preparation.errors
     ) == 1
-
     assert len(
         preparation.requests
     ) == 1
-
     assert (
         preparation.requests[
             0
@@ -1175,19 +1126,15 @@ def test_partial_fetch_batch_processes_only_authorized_prefix():
     sq = _sub_question(
         id="sq_one",
     )
-
     first = _source(
         id="src_one",
         url="https://example.com/one",
     )
-
     second = _source(
         id="src_two",
         url="https://example.com/two",
     )
-
     collector = _collector()
-
     plan = collector.plan(
         sub_questions=[
             sq,
@@ -1207,7 +1154,6 @@ def test_partial_fetch_batch_processes_only_authorized_prefix():
             second,
         ],
     )
-
     fetch_batch = _fetch_batch(
         [
             first,
@@ -1215,13 +1161,11 @@ def test_partial_fetch_batch_processes_only_authorized_prefix():
         ],
         authorized=1,
     )
-
     first_result = (
         _successful_fetch(
             first
         )
     )
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -1231,15 +1175,12 @@ def test_partial_fetch_batch_processes_only_authorized_prefix():
             ],
         )
     )
-
     assert preparation.sources == (
         first_result.source,
     )
-
     assert len(
         preparation.requests
     ) == 1
-
     assert (
         preparation.requests[
             0
@@ -1253,11 +1194,9 @@ def test_fetch_results_count_must_match_authorized_sources():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     with pytest.raises(
         ValueError,
         match="exactly one result",
@@ -1278,16 +1217,13 @@ def test_fetched_source_id_must_match_requested_source():
         id="src_expected",
         url="https://example.com/article",
     )
-
     wrong = _source(
         id="src_wrong",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     with pytest.raises(
         ValueError,
         match="Source ID",
@@ -1312,16 +1248,13 @@ def test_fetched_source_url_must_match_requested_source():
         id="src_one",
         url="https://example.com/article",
     )
-
     wrong_url_source = _source(
         id="src_one",
         url="https://example.com/other",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     with pytest.raises(
         ValueError,
         match="Source URL",
@@ -1346,18 +1279,14 @@ def test_fetch_batch_must_preserve_plan_prefix():
         id="src_one",
         url="https://example.com/one",
     )
-
     second = _source(
         id="src_two",
         url="https://example.com/two",
     )
-
     sq = _sub_question(
         id="sq_one",
     )
-
     collector = _collector()
-
     plan = collector.plan(
         sub_questions=[
             sq,
@@ -1377,7 +1306,6 @@ def test_fetch_batch_must_preserve_plan_prefix():
             second,
         ],
     )
-
     with pytest.raises(
         ValueError,
         match="deterministic prefix",
@@ -1402,11 +1330,9 @@ def test_preparation_is_frozen():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     preparation = (
         _collector().prepare_evidence_requests(
             plan=plan,
@@ -1422,7 +1348,6 @@ def test_preparation_is_frozen():
             ],
         )
     )
-
     with pytest.raises(
         FrozenInstanceError
     ):
@@ -1430,7 +1355,11 @@ def test_preparation_is_frozen():
 
 
 # ---------------------------------------------------------------------------
+
+
 # Authorized evidence collection
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -1439,19 +1368,15 @@ def test_one_authorized_evidence_call_is_collected():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     collector = _collector()
-
     fetch_result = (
         _successful_fetch(
             source
         )
     )
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -1465,28 +1390,24 @@ def test_one_authorized_evidence_call_is_collected():
             ],
         )
     )
-
     evidence = _evidence(
         id="ev_one",
         source_id="src_one",
         sub_question_id="sq_one",
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
                 "src_one",
                 "sq_one",
-            ): [
+            ): _extraction_result(
                 evidence,
-            ],
+            ),
         }
     )
-
     collector = _collector(
         extractor=extractor,
     )
-
     result = collector.collect(
         preparation=preparation,
         evidence_batch=_evidence_batch(
@@ -1495,22 +1416,18 @@ def test_one_authorized_evidence_call_is_collected():
             )
         ),
     )
-
     assert extractor.calls == [
         (
             "src_one",
             "sq_one",
         )
     ]
-
     assert result.sources == [
         fetch_result.source,
     ]
-
     assert result.evidence == [
         evidence,
     ]
-
     assert result.errors == []
 
 
@@ -1518,20 +1435,16 @@ def test_evidence_calls_preserve_request_order():
     sq_one = _sub_question(
         id="sq_one",
     )
-
     sq_two = _sub_question(
         id="sq_two",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     initial_collector = (
         _collector()
     )
-
     plan = initial_collector.plan(
         sub_questions=[
             sq_one,
@@ -1551,7 +1464,6 @@ def test_evidence_calls_preserve_request_order():
             source,
         ],
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1567,15 +1479,12 @@ def test_evidence_calls_preserve_request_order():
             ],
         )
     )
-
     extractor = (
         FakeEvidenceExtractor()
     )
-
     collector = _collector(
         extractor=extractor,
     )
-
     collector.collect(
         preparation=preparation,
         evidence_batch=_evidence_batch(
@@ -1584,7 +1493,6 @@ def test_evidence_calls_preserve_request_order():
             )
         ),
     )
-
     assert extractor.calls == [
         (
             "src_one",
@@ -1602,15 +1510,12 @@ def test_budget_blocked_call_is_not_sent_to_extractor():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1626,15 +1531,12 @@ def test_budget_blocked_call_is_not_sent_to_extractor():
             ],
         )
     )
-
     extractor = (
         FakeEvidenceExtractor()
     )
-
     collector = _collector(
         extractor=extractor,
     )
-
     result = collector.collect(
         preparation=preparation,
         evidence_batch=_evidence_batch(
@@ -1644,7 +1546,6 @@ def test_budget_blocked_call_is_not_sent_to_extractor():
             authorized=0,
         ),
     )
-
     assert extractor.calls == []
     assert result.evidence == []
 
@@ -1654,15 +1555,12 @@ def test_blank_page_call_is_not_sent_to_extractor():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1679,26 +1577,21 @@ def test_blank_page_call_is_not_sent_to_extractor():
             ],
         )
     )
-
     assert len(
         preparation.requests
     ) == 1
-
     assert (
         preparation.requests[
             0
         ].requires_llm
         is False
     )
-
     extractor = (
         FakeEvidenceExtractor()
     )
-
     collector = _collector(
         extractor=extractor,
     )
-
     result = collector.collect(
         preparation=preparation,
         evidence_batch=_evidence_batch(
@@ -1707,7 +1600,6 @@ def test_blank_page_call_is_not_sent_to_extractor():
             )
         ),
     )
-
     assert extractor.calls == []
     assert result.evidence == []
 
@@ -1716,20 +1608,16 @@ def test_llm_error_is_recorded_and_collection_continues():
     sq_one = _sub_question(
         id="sq_one",
     )
-
     sq_two = _sub_question(
         id="sq_two",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     initial_collector = (
         _collector()
     )
-
     plan = initial_collector.plan(
         sub_questions=[
             sq_one,
@@ -1749,7 +1637,6 @@ def test_llm_error_is_recorded_and_collection_continues():
             source,
         ],
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1765,7 +1652,6 @@ def test_llm_error_is_recorded_and_collection_continues():
             ],
         )
     )
-
     good_evidence = (
         _evidence(
             id="ev_two",
@@ -1773,7 +1659,6 @@ def test_llm_error_is_recorded_and_collection_continues():
             sub_question_id="sq_two",
         )
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
@@ -1785,12 +1670,11 @@ def test_llm_error_is_recorded_and_collection_continues():
             (
                 "src_one",
                 "sq_two",
-            ): [
+            ): _extraction_result(
                 good_evidence,
-            ],
+            ),
         }
     )
-
     result = _collector(
         extractor=extractor,
     ).collect(
@@ -1801,29 +1685,99 @@ def test_llm_error_is_recorded_and_collection_continues():
             )
         ),
     )
-
     assert len(
         result.errors
     ) == 1
-
     assert (
         "src_one"
         in result.errors[0]
     )
-
     assert (
         "sq_one"
         in result.errors[0]
     )
-
     assert (
         "LLMResponseError"
         in result.errors[0]
     )
-
     assert result.evidence == [
         good_evidence,
     ]
+
+
+def test_grounding_rejection_is_recorded_without_discarding_valid_evidence():
+    source = _source(
+        id="src_one",
+        url="https://example.com/article",
+    )
+    plan = _single_plan(
+        source=source,
+    )
+    initial_collector = (
+        _collector()
+    )
+    fetch_result = (
+        _successful_fetch(
+            source
+        )
+    )
+    preparation = (
+        initial_collector.prepare_evidence_requests(
+            plan=plan,
+            fetch_batch=_fetch_batch(
+                [
+                    source,
+                ]
+            ),
+            fetch_results=[
+                fetch_result,
+            ],
+        )
+    )
+    good_evidence = _evidence(
+        id="ev_one",
+        source_id="src_one",
+        sub_question_id="sq_one",
+    )
+    extractor = FakeEvidenceExtractor(
+        responses={
+            (
+                "src_one",
+                "sq_one",
+            ): _extraction_result(
+                good_evidence,
+                grounding_rejections=1,
+            ),
+        }
+    )
+    result = _collector(
+        extractor=extractor,
+    ).collect(
+        preparation=preparation,
+        evidence_batch=_evidence_batch(
+            list(
+                preparation.requests
+            )
+        ),
+    )
+    assert result.evidence == [
+        good_evidence,
+    ]
+    assert len(
+        result.errors
+    ) == 1
+    assert (
+        "EvidenceGroundingError"
+        in result.errors[0]
+    )
+    assert (
+        "src_one"
+        in result.errors[0]
+    )
+    assert (
+        "sq_one"
+        in result.errors[0]
+    )
 
 
 def test_non_llm_extractor_error_propagates():
@@ -1831,15 +1785,12 @@ def test_non_llm_extractor_error_propagates():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1855,11 +1806,9 @@ def test_non_llm_extractor_error_propagates():
             ],
         )
     )
-
     original_error = RuntimeError(
         "programming bug"
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
@@ -1868,7 +1817,6 @@ def test_non_llm_extractor_error_propagates():
             ): original_error,
         }
     )
-
     with pytest.raises(
         RuntimeError
     ) as exc_info:
@@ -1882,27 +1830,23 @@ def test_non_llm_extractor_error_propagates():
                 )
             ),
         )
-
     assert (
         exc_info.value
         is original_error
     )
 
 
-def test_evidence_extractor_must_return_list():
+def test_evidence_extractor_must_return_extraction_result():
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1918,7 +1862,6 @@ def test_evidence_extractor_must_return_list():
             ],
         )
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
@@ -1927,10 +1870,9 @@ def test_evidence_extractor_must_return_list():
             ): "invalid",
         }
     )
-
     with pytest.raises(
         TypeError,
-        match="return a list",
+        match="EvidenceExtractionResult",
     ):
         _collector(
             extractor=extractor,
@@ -1949,15 +1891,12 @@ def test_every_extracted_item_must_be_evidence():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -1973,18 +1912,32 @@ def test_every_extracted_item_must_be_evidence():
             ],
         )
     )
-
+    # Construct a deliberately malformed result without running the
+    # EvidenceExtractionResult validator. This verifies that the collector
+    # keeps its own defensive type check at the service boundary.
+    malformed = object.__new__(
+        EvidenceExtractionResult
+    )
+    object.__setattr__(
+        malformed,
+        "evidence",
+        [
+            "not Evidence",
+        ],
+    )
+    object.__setattr__(
+        malformed,
+        "grounding_rejections",
+        0,
+    )
     extractor = FakeEvidenceExtractor(
         responses={
             (
                 "src_one",
                 "sq_one",
-            ): [
-                "not Evidence",
-            ],
+            ): malformed,
         }
     )
-
     with pytest.raises(
         TypeError,
         match="invalid evidence type",
@@ -2006,15 +1959,12 @@ def test_evidence_source_id_must_match_processed_source():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -2030,24 +1980,21 @@ def test_evidence_source_id_must_match_processed_source():
             ],
         )
     )
-
     wrong = _evidence(
         id="ev_one",
         source_id="src_wrong",
         sub_question_id="sq_one",
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
                 "src_one",
                 "sq_one",
-            ): [
+            ): _extraction_result(
                 wrong,
-            ],
+            ),
         }
     )
-
     with pytest.raises(
         ValueError,
         match="source_id",
@@ -2069,15 +2016,12 @@ def test_evidence_sub_question_id_must_match_processed_question():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     initial_collector = (
         _collector()
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -2093,24 +2037,21 @@ def test_evidence_sub_question_id_must_match_processed_question():
             ],
         )
     )
-
     wrong = _evidence(
         id="ev_one",
         source_id="src_one",
         sub_question_id="sq_wrong",
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
                 "src_one",
                 "sq_one",
-            ): [
+            ): _extraction_result(
                 wrong,
-            ],
+            ),
         }
     )
-
     with pytest.raises(
         ValueError,
         match="sub_question_id",
@@ -2131,20 +2072,16 @@ def test_duplicate_evidence_ids_across_collection_are_rejected():
     sq_one = _sub_question(
         id="sq_one",
     )
-
     sq_two = _sub_question(
         id="sq_two",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     initial_collector = (
         _collector()
     )
-
     plan = initial_collector.plan(
         sub_questions=[
             sq_one,
@@ -2164,7 +2101,6 @@ def test_duplicate_evidence_ids_across_collection_are_rejected():
             source,
         ],
     )
-
     preparation = (
         initial_collector.prepare_evidence_requests(
             plan=plan,
@@ -2180,32 +2116,30 @@ def test_duplicate_evidence_ids_across_collection_are_rejected():
             ],
         )
     )
-
     extractor = FakeEvidenceExtractor(
         responses={
             (
                 "src_one",
                 "sq_one",
-            ): [
+            ): _extraction_result(
                 _evidence(
                     id="ev_duplicate",
                     source_id="src_one",
                     sub_question_id="sq_one",
                 ),
-            ],
+            ),
             (
                 "src_one",
                 "sq_two",
-            ): [
+            ): _extraction_result(
                 _evidence(
                     id="ev_duplicate",
                     source_id="src_one",
                     sub_question_id="sq_two",
                 ),
-            ],
+            ),
         }
     )
-
     with pytest.raises(
         RuntimeError,
         match="duplicate Evidence ID",
@@ -2227,13 +2161,10 @@ def test_fetch_errors_are_preserved_in_final_result():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     collector = _collector()
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -2250,20 +2181,16 @@ def test_fetch_errors_are_preserved_in_final_result():
             ],
         )
     )
-
     result = collector.collect(
         preparation=preparation,
         evidence_batch=_evidence_batch(
             []
         ),
     )
-
     assert result.evidence == []
-
     assert len(
         result.errors
     ) == 1
-
     assert (
         "fetch failed"
         in result.errors[0]
@@ -2275,13 +2202,10 @@ def test_evidence_batch_size_must_match_prepared_requests():
         id="src_one",
         url="https://example.com/article",
     )
-
     plan = _single_plan(
         source=source,
     )
-
     collector = _collector()
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -2297,7 +2221,6 @@ def test_evidence_batch_size_must_match_prepared_requests():
             ],
         )
     )
-
     with pytest.raises(
         ValueError,
         match="one-for-one",
@@ -2314,18 +2237,14 @@ def test_evidence_batch_must_preserve_request_order():
     sq_one = _sub_question(
         id="sq_one",
     )
-
     sq_two = _sub_question(
         id="sq_two",
     )
-
     source = _source(
         id="src_one",
         url="https://example.com/article",
     )
-
     collector = _collector()
-
     plan = collector.plan(
         sub_questions=[
             sq_one,
@@ -2345,7 +2264,6 @@ def test_evidence_batch_must_preserve_request_order():
             source,
         ],
     )
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -2361,13 +2279,11 @@ def test_evidence_batch_must_preserve_request_order():
             ],
         )
     )
-
     reversed_requests = list(
         reversed(
             preparation.requests
         )
     )
-
     with pytest.raises(
         ValueError,
         match="preserve",
@@ -2381,7 +2297,11 @@ def test_evidence_batch_must_preserve_request_order():
 
 
 # ---------------------------------------------------------------------------
+
+
 # Transient-content invariant
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -2390,17 +2310,13 @@ def test_full_page_text_is_not_returned_in_collection_result():
         id="src_one",
         url="https://example.com/article",
     )
-
     secret_page_text = (
         "FULL WEBPAGE TEXT THAT MUST REMAIN TRANSIENT"
     )
-
     collector = _collector()
-
     plan = _single_plan(
         source=source,
     )
-
     preparation = (
         collector.prepare_evidence_requests(
             plan=plan,
@@ -2417,7 +2333,6 @@ def test_full_page_text_is_not_returned_in_collection_result():
             ],
         )
     )
-
     result = collector.collect(
         preparation=preparation,
         evidence_batch=_evidence_batch(
@@ -2427,38 +2342,32 @@ def test_full_page_text_is_not_returned_in_collection_result():
             authorized=0,
         ),
     )
-
     assert (
         secret_page_text
         not in str(
             result.sources
         )
     )
-
     assert (
         secret_page_text
         not in str(
             result.evidence
         )
     )
-
     assert (
         secret_page_text
         not in str(
             result.errors
         )
     )
-
     assert not hasattr(
         result,
         "pages",
     )
-
     assert not hasattr(
         result,
         "requests",
     )
-
     assert not hasattr(
         result,
         "fetch_results",

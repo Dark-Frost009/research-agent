@@ -1,28 +1,14 @@
-# Research Agent
+Research Agent
+A production-oriented research agent built with Python, LangGraph, Gemini, Tavily, and Streamlit.
+The agent takes a research question, breaks it into focused sub-questions, searches the web, safely fetches source pages, extracts grounded evidence, critiques whether that evidence is sufficient, optionally performs another research iteration, and produces a final answer whose trusted citations must pass both deterministic grounding checks and semantic verification.
+The project is built around one principle:
+An LLM should not be trusted merely because it produced a plausible answer.
 
-A production-oriented research agent built with Python and LangGraph.
-
-The agent takes a research question, breaks it into focused sub-questions, searches the web, safely fetches source pages, extracts grounded evidence, critiques whether that evidence is sufficient, optionally performs another research iteration, and produces a final answer with citations tied back to verified evidence.
-
-The project is designed around a simple principle:
-
-> An LLM should not be trusted merely because it produced a plausible answer.
-
-Instead, research, evidence extraction, synthesis, citation creation, and semantic verification are separated into explicit stages with bounded budgets and fail-closed validation.
-
----
-
-## What the Agent Does
-
+Research, evidence extraction, synthesis, citation creation, and semantic verification are therefore separated into explicit stages with bounded budgets and fail-closed validation.
+What the Agent Does
 Given a question such as:
-
-```text
-What is retrieval-augmented generation and what problem does it solve?
-```
-
+What is retrieval-augmented generation, and what is one limitation it does not fully solve?
 the production workflow is approximately:
-
-```text
 User Question
      │
      ▼
@@ -64,6 +50,9 @@ Critic
 Final Synthesis
      │
      ▼
+Deterministic Grounding Validation
+     │
+     ▼
 Semantic Verification
      │
      ▼
@@ -71,16 +60,10 @@ Trusted Citations
      │
      ▼
 ResearchReport
-```
-
 The research loop is bounded by whole-run budgets so the graph cannot continue searching, fetching, or calling the LLM indefinitely.
-
----
-
-## Key Features
-
+Key Features
 - LangGraph-based production research workflow
-- Google Gemini as the LLM provider
+- Google Gemini as the production LLM provider
 - Tavily web search
 - Safe webpage fetching with SSRF protections
 - NAT64-aware IP validation
@@ -88,6 +71,7 @@ The research loop is bounded by whole-run budgets so the graph cannot continue s
 - Structured Pydantic outputs for LLM stages
 - Deterministic evidence and citation handles
 - Exact quote grounding
+- Candidate-level evidence grounding
 - Evidence-to-claim provenance validation
 - Semantic support verification before trusted citations are created
 - Evidence sufficiency critic
@@ -95,84 +79,54 @@ The research loop is bounded by whole-run budgets so the graph cannot continue s
 - Whole-run search, fetch, source, iteration, and LLM budgets
 - Protected finalization LLM reserve
 - Deterministic LangGraph reducers
+- Fresh workspace isolation for production graph invocations
 - CLI entry point
-- Extensive unit, orchestration, graph-slice, integration, and production-graph tests
-- Real end-to-end provider smoke testing
-
----
-
-# Architecture
-
-## 1. Planner
-
-The Planner converts the original research question into focused `SubQuestion` objects.
-
+- Streamlit web interface
+- Local SQLite research history
+- Search and filters for saved research
+- Saved-run comparison
+- History backup and restore
+- Incomplete-run preservation
+- Research-depth presets
+- Run summaries and budget reporting
+- Offline demo
+- Offline evaluation dashboard
+- Local release-readiness reports
+- Public portfolio demo-only mode
+- Extensive unit, orchestration, graph-slice, integration, UI, persistence, and production-graph tests
+- Manual live-provider smoke testing
+Architecture
+1. Planner
+The Planner converts the original research question into focused SubQuestion objects.
 The Planner:
-
-- receives only the original research question
+- receives the original research question
 - produces structured output through Gemini
 - is used only for the initial research iteration
 - does not execute searches itself
 - consumes one optional-research LLM budget unit when authorized
-
 Follow-up iterations do not call the Planner again.
-
-The Critic already produces concrete follow-up questions, so those questions are converted deterministically into `SubQuestion` objects without spending another Planner LLM call.
-
----
-
-## 2. Search
-
+The Critic already produces concrete follow-up questions, so those questions are converted deterministically into SubQuestion objects without spending another Planner LLM call.
+2. Search
 Each authorized sub-question is sent to the configured search provider.
-
 Production currently uses:
-
-```text
 Tavily
-```
-
-Search execution is separated into two stages:
-
-```text
+Search execution is separated into reservation and execution:
 reserve_search
       ↓
 execute_search
-```
-
 The reservation stage determines exactly how many queries are allowed before any provider side effect occurs.
-
 This prevents uncontrolled search fan-out.
-
----
-
-## 3. Source Admission
-
-Search results are converted into durable `Source` objects.
-
+3. Source Admission
+Search results are converted into durable Source objects.
 Source admission is bounded by:
-
-```text
 MAX_SOURCES_PER_RUN
-```
-
 Sources are deduplicated using stable IDs.
-
 The original search-result URL remains the stable source identity even when a webpage redirects during fetching.
-
 The fetched destination is stored separately as:
-
-```text
 final_url
-```
-
----
-
-## 4. Safe Web Fetching
-
-Authorized sources are fetched through `WebPageFetcher`.
-
+4. Safe Web Fetching
+Authorized sources are fetched through WebPageFetcher.
 The fetch layer includes protections for:
-
 - unsafe URL schemes
 - private IP ranges
 - loopback addresses
@@ -183,72 +137,33 @@ The fetch layer includes protections for:
 - excessive redirect chains
 - oversized responses
 - unsupported content types
-
 A redirect does not automatically become trusted.
-
 Every redirect destination must pass the URL safety validator before another network request is made.
-
 Raw webpage text is transient and is not stored in durable graph state.
-
----
-
-## 5. Evidence Extraction
-
-Fetched pages are passed to the `EvidenceExtractor`.
-
+5. Evidence Extraction
+Fetched pages are passed to the EvidenceExtractor.
 Evidence is always associated with:
-
-```text
 Source
    +
 SubQuestion
-```
-
 The extraction stage requires evidence excerpts to be grounded directly in fetched page text.
-
 The LLM cannot create arbitrary supporting quotes.
-
-Returned evidence must pass deterministic validation before becoming durable graph state.
-
----
-
-## 6. Critic
-
+Returned evidence must pass deterministic validation before becoming durable graph state. Candidate-level validation keeps exact grounded candidates and rejects mismatches rather than weakening the provenance rules.
+6. Critic
 After evidence collection, the Critic asks:
-
-```text
 Is the accumulated evidence sufficient to answer the original question?
-```
-
 The Critic receives grounded evidence only.
-
 It does not receive raw webpage contents.
-
-The Critic can return:
-
-```text
+It can return:
 sufficient = True
-```
-
 or:
-
-```text
 sufficient = False
 gaps = [...]
 follow_up_questions = [...]
-```
-
 If more research is justified and whole-run budgets allow it, the graph begins another research iteration.
-
 Otherwise, the graph proceeds to finalization using the evidence already collected.
-
----
-
-# Research Loop
-
+Research Loop
 The production loop is:
-
-```text
 Evidence
    ↓
 Critic
@@ -259,7 +174,7 @@ Critic
    │
    └── insufficient
            ↓
-     Check remaining budgets
+      Check remaining budgets
            │
            ├── unavailable
            │       ↓
@@ -267,125 +182,69 @@ Critic
            │
            └── available
                    ↓
-            Reserve iteration
+             Reserve iteration
                    ↓
-          Follow-up SubQuestions
+            Follow-up SubQuestions
                    ↓
                  Search
                    ↓
                  Fetch
                    ↓
-               Evidence
+                Evidence
                    ↓
                  Critic
-```
-
 The router checks whether at least one additional research cycle is actually viable before entering another iteration.
-
----
-
-# Grounded Synthesis
-
+Grounded Synthesis
 Final synthesis does not receive arbitrary source documents.
-
-It receives validated `Evidence`.
-
+It receives validated Evidence.
 Before synthesis, evidence receives deterministic handles:
-
-```text
 E1
 E2
 E3
 ...
-```
-
-The LLM must return claims together with:
-
-```text
+The synthesis model must return claims together with evidence references and supporting quotes.
+Conceptually:
 claim_text
 evidence_handle
 supporting_quote
-```
-
-The system then validates that:
-
+The system validates that:
 1. every referenced evidence handle exists
 2. every supporting quote is an exact substring of the referenced evidence excerpt
-3. duplicate evidence handles are rejected
+3. duplicate evidence handles are rejected where they violate the synthesis contract
 4. duplicate synthesized claims are rejected
-5. the returned claim text exists in the generated answer
-6. citation IDs are not created until validation succeeds
-
+5. returned claim text is represented in the generated answer
+6. factual claims must be grounded through the synthesis contract
+7. citation IDs are not created until grounding validation succeeds
 This prevents citations from being accepted solely because the LLM says they are correct.
-
----
-
-# Semantic Verification
-
-Exact quote matching proves that a quote came from the source.
-
+Semantic Verification
+Exact quote matching proves that a quote came from the referenced evidence.
 It does not by itself prove that the quote actually supports the claim.
-
 The project therefore includes a separate semantic verification stage.
-
-After synthesis, another structured LLM call evaluates claim-to-evidence support.
-
-This stage verifies:
-
-```text
+After deterministic grounding validation, another structured LLM call evaluates claim-to-evidence support:
 Claim
    ↓
 Referenced Evidence
    ↓
 Does the evidence actually support the claim?
-```
-
-Trusted `Citation` objects are created only after both deterministic provenance checks and semantic verification succeed.
-
-If deterministic grounding validation or semantic verification rejects the proposed answer, production finalization discards that answer and returns a `ResearchReport` with this fixed content and zero citations:
-
-```text
-The available evidence could not be verified strongly enough to produce a grounded answer.
-```
-
-Only `SynthesisValidationError` and `SynthesisVerificationError` trigger this fallback. Rejected draft content and verifier diagnostics are not copied into graph state or the final report. No additional provider calls are made, and the already-recorded two-call finalization reservation is retained, including when grounding rejection prevents the verifier call.
-
-Provider failures, generic structured-response errors, and programming errors still propagate as operational failures; the CLI reports failure and exits with a nonzero status. The fallback does not weaken either validation gate.
-
-
----
-
-# Protected Finalization
-
-Finalization requires two LLM calls:
-
-```text
+Trusted Citation objects are created only after both deterministic provenance checks and semantic verification succeed.
+If deterministic grounding validation or semantic verification rejects the proposed answer, production finalization discards that answer and returns a ResearchReport with a fixed safe fallback and zero trusted citations.
+Rejected draft content and verifier diagnostics are not copied into graph state or the final report.
+Provider failures, generic structured-response errors, and programming errors remain operational failures rather than being relabeled as successful verification rejection.
+The validation gates are fail-closed; they are not weakened to force an answer.
+Protected Finalization
+Finalization requires two protected LLM calls:
 1. Synthesis
 2. Semantic verification
-```
-
 The budget system reserves those calls as an atomic finalization pair.
-
 Optional research work is not allowed to consume this protected capacity.
-
 Default:
-
-```env
 FINALIZATION_LLM_RESERVE=2
-```
-
-If only part of the required finalization capacity is available, the finalization pair is not partially executed.
-
----
-
-# Whole-Run Budget System
-
+If the required finalization capacity is unavailable, the pair is not partially authorized.
+Whole-Run Budget System
 The agent uses centralized whole-run budgets rather than allowing individual nodes to make unlimited provider calls.
-
-The main limits are:
-
-```env
+Default limits include:
 MAX_RESEARCH_ITERATIONS=2
+MAX_SUB_QUESTIONS=5
 
 MAX_SEARCH_QUERIES_PER_RUN=8
 MAX_SEARCH_QUERIES_PER_ITERATION=5
@@ -396,61 +255,31 @@ MAX_SOURCE_FETCHES_PER_RUN=12
 
 MAX_LLM_CALLS_PER_RUN=64
 FINALIZATION_LLM_RESERVE=2
-```
-
-Durable state tracks actual usage:
-
-```text
+Durable state tracks actual committed usage:
 iteration_count
 search_queries_used
 source_fetches_used
 llm_calls_used
-```
-
 Remaining capacity is calculated rather than stored.
-
-This avoids duplicated mutable budget state.
-
 Provider attempts consume budget once execution has been authorized, even when the provider later fails.
-
----
-
-# Reservation Before Side Effects
-
-External operations follow a reservation/execution pattern.
-
+Reservation Before Side Effects
+External operations use a reservation/execution pattern.
 Example:
-
-```text
 reserve_source_fetch
         ↓
 execute_source_fetch
-```
-
 The reservation determines exactly what work is authorized.
-
 Only that authorized batch is allowed to reach the external provider.
-
-This pattern is used for operations such as:
-
-```text
+The pattern is used for operations such as:
 Planner LLM calls
 Search calls
 Source fetches
 Evidence extraction LLM calls
 Critic LLM calls
 Finalization LLM calls
-```
-
 This prevents worker-level fan-out from bypassing whole-run limits.
-
----
-
-# State and Reducers
-
-`ResearchState` contains durable research data such as:
-
-```text
+State and Reducers
+ResearchState contains durable research data such as:
 original_question
 sub_questions
 search_results
@@ -467,27 +296,13 @@ source_fetches_used
 llm_calls_used
 
 errors
-```
-
 Additive usage counters use reducers with delta semantics.
-
 Source merging is deterministic and independent of branch execution order.
-
 Transient authorization objects and fetched page contents are stored outside durable research data in the graph workspace.
-
----
-
-# Production Graph
-
+Production Graph
 The compiled production graph lives in:
-
-```text
 src/research_agent/graph/builder.py
-```
-
-The main route is:
-
-```text
+The main route is approximately:
 START
   ↓
 reserve_initial_iteration
@@ -518,85 +333,80 @@ execute_critique
   ↓
 route_after_critique
   ├──────── continue_research
-  │               ↓
+  │              ↓
   │      reserve_follow_up_iteration
-  │               ↓
+  │              ↓
   │      adapt_critique_follow_ups
-  │               ↓
-  │            search...
+  │              ↓
+  │           search...
   │
   └──────── finalize
-                  ↓
+                 ↓
           reserve_finalization
-                  ↓
+                 ↓
           execute_finalization
-                  ↓
+                 ↓
           assemble_final_report
-                  ↓
-                 END
-```
-
----
-
-# Production Dependency Wiring
-
+                 ↓
+                END
+Production Dependency Wiring
 The production composition root lives in:
-
-```text
 src/research_agent/bootstrap.py
-```
-
-It builds:
-
-```text
+It builds the configured providers, graph services, and budget policy before assembling a fresh production research application.
+Production provider logic is intentionally kept out of graph nodes.
+Conceptually:
 Settings
    │
    ├── GeminiLLMClient
-   │
    ├── TavilySearchClient
-   │
    ├── WebPageFetcher
-   │
    └── BudgetPolicy
             │
             ▼
-         Planner
-         SearchNode
-         SourceNode
-         SourceFetcher
-         EvidenceExtractor
-         EvidenceCollector
-         Critic
-         Synthesizer
+        Research services
             │
             ▼
-    ResearchGraphContext
+   ResearchGraphContext
             │
             ▼
-    Compiled LangGraph
-```
-
-Production provider logic is intentionally kept out of graph nodes.
-
----
-
-# Project Structure
-
-```text
+      Compiled LangGraph
+Workspace Isolation
+Each production graph invocation requires a fresh ResearchGraphContext and TransientWorkspace.
+Use build_research_context(settings) for a fresh context or build_research_application(settings) to build the graph and context together.
+The CLI creates a fresh application for every research run.
+The compiled graph can be reused only with fresh contexts. The initial node atomically claims the workspace before clearing temporary data, reserving budget, or calling providers.
+Sequential or concurrent reuse of the same workspace raises an error.
+The claim remains consumed after completion, failure, or clear_all(). A new request should use fresh dependencies rather than resetting a used workspace.
+This guard applies to the production graph entry point, not direct calls to individual orchestration nodes.
+It does not add retries, persistent checkpoint resumability, or guarantees about provider clients that a caller manually shares between otherwise separate contexts.
+Project Structure
+The project uses a src/ layout. Important files and modules include:
 research-agent/
+│
+├── app.py
 │
 ├── src/
 │   └── research_agent/
 │       ├── bootstrap.py
 │       ├── config.py
 │       ├── main.py
+│       ├── ui_service.py
+│       ├── history.py
+│       ├── backup_ui.py
+│       ├── comparison_ui.py
+│       ├── demo.py
+│       ├── depth.py
+│       ├── evaluation_dashboard.py
+│       ├── incomplete.py
+│       ├── release_readiness.py
+│       ├── run_summary.py
 │       │
 │       ├── graph/
 │       │   ├── budget.py
 │       │   ├── builder.py
 │       │   ├── context.py
+│       │   ├── execution.py
 │       │   ├── state.py
-│       │   │
 │       │   └── nodes/
 │       │       ├── critic.py
 │       │       ├── critic_orchestration.py
@@ -639,85 +449,86 @@ research-agent/
 │           └── web_search.py
 │
 ├── tests/
+├── evals/
 ├── .env.example
+├── .gitignore
 ├── pyproject.toml
 └── README.md
-```
-
----
-
-# Requirements
-
-Current project requirements include:
-
-```text
+The tree above highlights the main architecture rather than every test or support file.
+Requirements
+Current runtime requirements include:
 Python >= 3.12
-Pydantic
-pydantic-settings
+Pydantic 2.x
+pydantic-settings 2.x
 LangGraph
 Tavily Python SDK
 Requests
 BeautifulSoup
 Google GenAI SDK
+HTTPX
+Streamlit
+Development dependencies include:
 Pytest
-```
-
----
-
-# Installation
-
+The authoritative dependency constraints are in pyproject.toml.
+Installation
 The commands below are written for Windows PowerShell.
-
 Clone the repository and enter the project directory.
-
 Create a virtual environment:
-
-```powershell
 python -m venv .venv
-```
-
 Activate it:
-
-```powershell
 .venv\Scripts\Activate.ps1
-```
-
 Install the project in editable mode:
-
-```powershell
 pip install -e .
-```
-
 For development dependencies:
-
-```powershell
 pip install -e ".[dev]"
-```
-
----
-
-# Environment Configuration
-
+Environment Configuration
 Copy the example environment file:
-
-```powershell
 Copy-Item .env.example .env
-```
-
-Then configure your providers.
-
+Then configure the environment.
 Example:
+# --------------------------------------------------
+# Application
+# --------------------------------------------------
 
-```env
 APP_ENV=development
 LOG_LEVEL=INFO
 
+# Keep false for the normal local/live application.
+# Set true for a public portfolio deployment that must not expose
+# live provider calls or shared local research history.
+PUBLIC_DEMO_ONLY=false
+
+
+# --------------------------------------------------
+# LLM
+# --------------------------------------------------
+
 LLM_PROVIDER=gemini
-LLM_MODEL=gemini-3.6-flash
+
+# Legacy/default model.
+# Used as the fallback when a role-specific model is blank.
+LLM_MODEL=YOUR_GEMINI_MODEL
+
+# Optional model for planning, evidence extraction, and critique.
+LLM_WORKER_MODEL=
+
+# Optional model for synthesis and semantic verification.
+LLM_FINAL_MODEL=
+
 LLM_API_KEY=YOUR_GEMINI_API_KEY
+
+
+# --------------------------------------------------
+# Web Search
+# --------------------------------------------------
 
 SEARCH_PROVIDER=tavily
 TAVILY_API_KEY=YOUR_TAVILY_API_KEY
+
+
+# --------------------------------------------------
+# Research Limits
+# --------------------------------------------------
 
 MAX_RESEARCH_ITERATIONS=2
 MAX_SUB_QUESTIONS=5
@@ -732,43 +543,29 @@ MAX_SOURCE_FETCHES_PER_RUN=12
 MAX_LLM_CALLS_PER_RUN=64
 FINALIZATION_LLM_RESERVE=2
 
+
+# --------------------------------------------------
+# Network / Extraction
+# --------------------------------------------------
+
 REQUEST_TIMEOUT_SECONDS=15
 MAX_RESPONSE_BYTES=2097152
 MAX_TEXT_CHARS=100000
 MAX_REDIRECTS=5
-```
-
-The `.env` file is ignored by Git.
-
+LLM_WORKER_MODEL and LLM_FINAL_MODEL are optional. When either is blank, that role falls back to LLM_MODEL.
+The .env file is ignored by Git.
+.streamlit/secrets.toml is also ignored so a local Streamlit secrets file cannot be committed accidentally if one is created later.
 Never commit API keys.
-
----
-
-# Running the Agent
-
+Running the Agent
+CLI
 The project exposes a console command:
-
-```powershell
 research-agent "What is retrieval-augmented generation and what problem does it solve?"
-```
-
-The equivalent module invocation is:
-
-```powershell
+Equivalent module invocation:
 python -m research_agent.main "What is retrieval-augmented generation and what problem does it solve?"
-```
-
 Help:
-
-```powershell
 research-agent --help
-```
-
 A successful run prints a final research report and citation information.
-
 Example shape:
-
-```text
 RESEARCH REPORT
 ============================================================
 
@@ -778,106 +575,309 @@ CITATIONS
 ------------------------------------------------------------
 [citation-id] <supported claim>
   Evidence: <evidence-id>
-```
+Local Web Interface
+Install the development dependencies, then run from the project folder:
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1 --server.port 8502 --browser.gatherUsageStats false
+Open:
+http://localhost:8502
+With PUBLIC_DEMO_ONLY=false, the full local/live application is available.
+The Streamlit interface includes:
+- question input
+- research-depth selection
+- live Gemini/Tavily research
+- progress status
+- verified/partial/no-verified-answer status badges
+- answer-first report layout
+- progressively disclosed research notes
+- citations and supporting evidence
+- all researched sources
+- run details
+- TXT and JSON downloads
+- automatically saved completed research
+- incomplete-run snapshots when an ordinary execution exception is captured
+- saved-history search and filters
+- saved-run comparison
+- backup and restore
+- "Research this question again"
+- unsaved-work protection
+- offline demo
+- offline evaluation dashboard
+Every submitted live request gets fresh dependencies and a fresh workspace.
+Viewing, comparing, reopening, or downloading saved results does not rerun research.
+Provider error details and credentials are not displayed.
+The full live interface is designed for local/private use. It has no user authentication, and its SQLite history is shared by browser sessions that use the same application instance.
+Public Portfolio Deployment
+The project includes an explicit safe public mode:
+PUBLIC_DEMO_ONLY=true
+When enabled, the Streamlit entry point switches to a bundled portfolio demonstration before the shared history store, live provider path, developer tools, or normal research controls are initialized.
+Public demo-only mode:
+Bundled fictional sample
+        │
+        ├── sample report
+        ├── sample citations
+        ├── sample evidence
+        ├── illustrative run summary
+        └── demo downloads
 
----
+No Gemini calls
+No Tavily calls
+No webpage fetching
+No live research form
+No shared research-history UI
+No backup/restore UI
+No saved-run comparison
+No developer-tools toggles
+The mode displays an explicit notice explaining that the public deployment is a portfolio demo and that live Gemini/Tavily research and saved research history are disabled.
+This mode exists because the normal local application uses one project-local SQLite history store and does not implement public-user authentication, per-user history ownership, public rate limiting, or public provider-quota controls.
+Setting PUBLIC_DEMO_ONLY=true does not delete or simplify the local application. It changes only the hosted execution path. Set it back to false to use the full local/live interface.
+A future unrestricted public live-research deployment would require additional controls such as authenticated users, per-user data isolation, and provider-abuse protection.
+Offline Demo
+In the normal local application, turn on Offline demo under Developer tools to explore a bundled fictional library-policy example.
+It includes:
+- sample answer
+- prepared citations
+- source excerpts
+- illustrative run summary
+- TXT and JSON downloads marked as demo content
+The offline demo does not:
+- search the web
+- fetch source pages
+- call AI providers
+- require API keys
+- access research history
+- assign its data to real report/incomplete-run session fields
+The example is hand-authored and is not a real or freshly verified research result.
+Its displayed budget is simulated; actual provider calls are zero.
+In normal local mode, turn the Offline demo toggle off to return to the existing session.
+In PUBLIC_DEMO_ONLY=true, the same bundled demo is rendered as the public portfolio experience and no toggle is exposed.
+Research Depth
+The Streamlit Research depth control offers three presets.
+Standard is selected initially.
+These are maximums, not targets or guarantees of answer quality, runtime, token consumption, or provider quota availability:
+Mode	Rounds	Searches	Sources / page reads	AI calls
+Quick	1	2	4 / 4	12
+Standard	2	5	8 / 8	32
+Thorough	3	8	12 / 12	64
 
-# Example Live Result
 
-During development, the production graph was run against real Gemini and Tavily services for the question:
-
-```text
-What is retrieval-augmented generation and what problem does it solve?
-```
-
-The live graph successfully completed:
-
-```text
+Every preset is capped by the existing environment configuration.
+For example, a global two-round environment cap still limits Thorough to two rounds.
+The interface shows effective limits before submission.
+Modes also cap planned sub-questions, searches per round, and results per search.
+Changing modes does not:
+- edit .env
+- switch models
+- start research
+All modes use the same grounding and semantic verification checks.
+The configured finalization reserve is preserved.
+Completed reports, incomplete entries, and exports retain the selected mode and effective limits.
+Older history entries remain readable without inventing mode information.
+CLI runs continue to use their configured budgets directly.
+Saved Research History
+Completed web-interface runs are automatically saved to:
+.local/research_history.sqlite
+The Saved research sidebar can:
+- list completed and incomplete runs
+- search saved questions
+- search report text
+- search source titles
+- search evidence excerpts
+- filter by run status
+- filter by research depth
+- filter by outcome
+- filter by date range
+- open saved reports
+- prepare a saved question for a fresh research run
+Opening or downloading a saved report makes no provider calls.
+History is local to the project and excluded from Git.
+It contains saved report content and extracted evidence, not API keys, runtime contexts, or full fetched webpages.
+The history store is intended for local/private use. It is shared by browser sessions using the same application instance and is therefore deliberately bypassed by public demo-only mode.
+Compact Saved-Report View
+When a completed or incomplete saved report is open, the new-research workflow is collapsed into:
+Start new research
+This keeps the report near the top of the page while preserving all research controls.
+Choosing Research this question again prepares the saved question and recorded depth and expands the new-research area so the prepared values can be reviewed before starting a fresh run.
+Preparing a retry makes no provider calls.
+Starting the retry creates a fresh run rather than resuming previously collected evidence.
+Saved-Run Comparison
+Turn on Compare saved runs to select two distinct saved entries and compare:
+- answers
+- recorded outcomes
+- research depth
+- budget usage
+- source lists
+- shared/distinct source URLs
+Incomplete runs are represented as incomplete rather than being given a fabricated answer.
+Older missing metadata is labeled as not recorded.
+Comparison is read-only and makes no provider calls.
+A Markdown comparison snapshot can also be downloaded.
+Backup and Restore
+In the sidebar, expand History backup & restore.
+A prepared JSON backup can contain:
+- completed runs
+- incomplete runs
+- evidence
+- citations
+- depth settings
+- recorded summaries
+It excludes:
+- unsaved session results
+- provider configuration
+- API keys
+- demo data
+Keep backups private because they contain research content.
+Restore validates the entire backup before writing.
+Restore merges missing entries in one transaction. Identical existing entries are skipped, while conflicting IDs cancel the restore rather than overwriting existing content.
+Backups over the configured validation limits are rejected.
+Neither backup nor restore makes provider calls.
+Public demo-only mode does not initialize or expose backup/restore controls.
+Run Summaries
+New web-interface runs retain a run summary in history and exports, including incomplete runs when a safe partial snapshot is available.
+The summary reports committed budget usage for resources such as:
+Research rounds
+Searches
+Sources
+Page reads
+AI calls
+These counts are reservation counters, not provider billing totals.
+Failed authorized attempts consume budget.
+Finalization reserves both protected calls before execution, so a failure during the first finalization call can still account for the pair of reserved calls.
+The summary also records why research stopped and whether finalization produced verified citations, found no evidence, lacked finalization capacity, or discarded a rejected answer.
+A run can contain trusted citations while still being presented as a partial answer if the research loop ended for a reason other than evidence sufficiency.
+Older results without detailed summaries remain readable and are labeled accordingly rather than being reconstructed from current settings.
+Incomplete Research
+An incomplete entry has no verified completed answer.
+Opening it shows:
+- the original question
+- the last recorded stage
+- safe stop information
+- collected sources
+- collected evidence
+- recorded run details
+- JSON download
+Rejected synthesis text and raw exception messages are not included in the incomplete snapshot.
+Incomplete entries are not checkpoints.
+Opening one does not resume execution.
+Submitting the question again starts a fresh run.
+Stopping the process, closing the app during execution, cancellation, or power failure does not guarantee that a partial run is saved because the production graph does not currently use a persistent LangGraph checkpointer.
+Protecting Unsaved Work
+If a report or incomplete run has not been saved, actions that would replace the active result are blocked.
+The current result stays available for download and save retry.
+If saving remains unavailable, the user can download the result and explicitly discard unsaved session copies before navigating away.
+The discard action removes only unsaved session results. It does not delete saved history or downloaded files.
+Session-only results cannot survive browser-session expiry, refresh in all cases, or process shutdown, so important work should be saved or downloaded before leaving.
+Offline Evaluation Dashboard
+The local Streamlit application includes an Offline evaluation dashboard under Developer tools.
+The dashboard runs bundled evaluation scenarios in a separate process and displays:
+- scenario results
+- grouped failure categories
+- saved evaluation history
+- baseline comparisons
+- downloadable JSON summaries
+The evaluation dashboard does not make live provider calls.
+It uses deterministic/scripted dependencies and blocked network access for the bundled offline cases.
+Evaluation history is separate from research history.
+Public demo-only mode does not expose the evaluation dashboard.
+Offline Answer-Quality Scenarios
+Run:
+python -m pytest tests/test_offline_evaluation.py -v
+for the bundled fixed research scenarios.
+The scenarios cover areas such as:
+- grounded answers
+- citation provenance
+- semantic rejection
+- conflicting evidence
+- insufficient evidence
+- multiple sources and claims
+- swapped citations
+- unsupported claims
+- adversarial source instructions
+They exercise the production graph with scripted providers and blocked network connections.
+These are safeguard regression checks, not a benchmark of live Gemini quality.
+Semantic verdicts and extracted evidence used by fixtures are deterministic test inputs.
+Passing adversarial prompt-boundary tests does not establish universal resistance to prompt injection.
+See:
+evals/README.md
+for the evaluation guide.
+Local Release-Readiness Report
+Run:
+python -m research_agent.release_readiness
+to run the offline release-readiness process and write Markdown and JSON reports under:
+.local/readiness/
+Use:
+python -m research_agent.release_readiness --output-dir PATH
+to choose another output directory.
+The readiness process records a source fingerprint and compares scenario results with the latest saved evaluation when an appropriate baseline is available.
+Missing or unreadable baselines are explicitly unassessed.
+Tests that fail, error, skip, or produce incomplete results prevent an offline pass.
+Source changes during the run also prevent a pass.
+Exit codes:
+0  Offline checks passed
+1  Offline checks need attention
+2  Readiness check could not complete
+An offline pass does not certify live Gemini quality or unrestricted public deployment readiness.
+The public portfolio demo-only path is a separate deployment-safety control.
+Example Live Result
+During development, the production graph has been run against real Gemini and Tavily services.
+Live smoke testing has exercised the full path:
 Planner
 → Tavily Search
 → Source Admission
-→ Web Fetching
+→ Safe Web Fetching
 → Evidence Extraction
 → Critique
 → Synthesis
+→ Deterministic Grounding Validation
 → Semantic Verification
 → ResearchReport
-```
-
-One verified live run produced:
-
-```text
-6 trusted citations
-```
-
-and a final grounded answer explaining RAG, external retrieval, training-data cutoffs, hallucination risk, domain-specific information, and the difference between retrieval augmentation and retraining.
-
-A follow-up live smoke-test attempt on 2026-09-19, after adding the safe rejection fallback, stopped at the first Gemini Planner call with `LLMProviderError`. It did not reach Tavily search, evidence collection, or finalization. The six-citation result above is the earlier successful run; the latest attempt does not reverify the live success path. The underlying provider-error cause was not captured in this attempt.
-
-Because search engines, webpages, and LLM outputs are external and dynamic, identical questions are not expected to produce identical sources or outputs every time.
-
-The agent is designed to fail closed when usable evidence is insufficient rather than fabricate a confident answer.
-
-For example, a bounded smoke-test run correctly returned:
-
-```text
-The available evidence is insufficient to answer the research question.
-```
-
-when adequate grounded evidence was not available in that run.
-
----
-
-# Testing
-
+A later live RAG run after the grounding and synthesis hardening produced separately grounded claims with trusted citations through the current verification path.
+Live output is intentionally not expected to be identical across runs because search results, webpages, provider availability, and LLM outputs are external and dynamic.
+The agent is designed to fail closed when the available evidence cannot be verified strongly enough rather than fabricate a confident grounded answer.
+Testing
 Run the full suite:
-
-```powershell
 pytest -q
-```
-
 Current verified development checkpoint:
-
-```text
-1847 passed
-```
-
-The suite includes:
-
-- configuration tests
-- schema tests
-- budget-policy tests
-- URL-safety tests
-- web-search tests
-- web-extraction tests
-- Gemini adapter tests
-- Planner tests
-- Search tests
-- Source tests
-- Source-fetch tests
-- Evidence extraction tests
-- Evidence collection tests
-- Critic tests
-- synthesis tests
-- semantic-verification tests
-- orchestration tests
-- LangGraph slice tests
-- production graph topology tests
-- production graph execution tests (13 cases), including real synthesis/verifier rejection, rejection-content isolation, budget exhaustion after follow-up research, denied real Critic authorization, and finalization operational-error propagation
-- bootstrap/composition-root tests
-- CLI tests
-
-Provider-facing tests use mocked or deterministic dependencies unless explicitly performing a manual live smoke test.
-
----
-
-# Security Model
-
-The project treats LLM output and external web content as untrusted.
-
-Important security boundaries include:
-
-```text
+2124 passed
+The suite includes coverage for areas such as:
+- configuration
+- schemas
+- budget policy
+- URL safety
+- web search
+- web extraction
+- Gemini adapter behavior
+- Planner
+- Search
+- Source admission
+- Source fetching
+- Evidence extraction
+- Evidence collection
+- Critic
+- Synthesis
+- deterministic grounding validation
+- semantic verification
+- orchestration
+- LangGraph slices
+- graph topology
+- production graph execution
+- bootstrap/composition root
+- CLI
+- Streamlit UI
+- research depth
+- local history
+- saved-run comparison
+- backup and restore
+- incomplete research
+- run summaries
+- offline demo isolation
+- public demo-only isolation
+- offline evaluation
+- release-readiness behavior
+Provider-facing automated tests use mocked, scripted, or deterministic dependencies unless a manual live smoke test is being performed explicitly.
+Security Model
+The project treats both LLM output and external web content as untrusted.
+Important network boundaries include:
 Search result URL
       ↓
 URL validation
@@ -889,139 +889,98 @@ Redirect destination
 URL validation again
       ↓
 Fetched page
-```
-
-External webpage content is also treated as untrusted prompt data.
-
-Prompts explicitly instruct LLM stages not to follow instructions embedded inside retrieved webpages.
-
+External webpage content is treated as untrusted prompt data.
+Prompts instruct LLM stages not to follow instructions embedded inside retrieved webpages.
 The project does not treat source text as trusted system instructions.
-
----
-
-# Citation Trust Model
-
-The citation pipeline intentionally separates several different questions:
-
-```text
+Other relevant controls include:
+- URL-scheme restrictions
+- private/loopback/link-local address rejection
+- NAT64-aware validation
+- redirect revalidation
+- response-size limits
+- content-type checks
+- bounded provider calls
+- structured-output validation
+- exact provenance validation
+- semantic citation verification
+- generic user-safe provider error messages
+- local secret files excluded from Git
+- public demo-only mode that bypasses live providers and shared research history
+The project does not claim that these controls make arbitrary public live-provider exposure safe. That is why the public portfolio deployment uses demo-only mode.
+Citation Trust Model
+The citation pipeline intentionally separates different questions:
 Did the quote come from the evidence?
                 ↓
 Does that evidence exist?
                 ↓
-Does the quote support the claim?
+Does the evidence support the claim?
                 ↓
 Only then create a trusted Citation
-```
-
-This means:
-
-```text
+Therefore:
 LLM-generated citation ≠ trusted citation
-```
-
 A citation becomes trusted only after passing the project's deterministic and semantic verification gates.
-
----
-
-# Why the Critic Runs Before Final Synthesis
-
+Why the Critic Runs Before Final Synthesis
 The Critic evaluates evidence before finalization.
-
-The graph intentionally does not:
-
-```text
+The graph intentionally does not use:
 Synthesize
 → Critique
 → Research More
 → Synthesize Again
-```
-
-because final synthesis and semantic verification consume a protected two-call finalization budget.
-
+because synthesis and semantic verification consume protected finalization capacity.
 Instead:
-
-```text
 Research
 → Critique
 → Research More if needed
 → Final Synthesis once
 → Semantic Verification once
-```
-
-This protects finalization capacity and avoids spending final-answer LLM calls before research is complete.
-
----
-
-# Why Follow-Up Research Does Not Call Planner Again
-
+This protects finalization capacity and avoids spending final-answer calls before research is complete.
+Why Follow-Up Research Does Not Call Planner Again
 The Critic already returns explicit follow-up research questions.
-
 Calling Planner again would:
-
 - spend another LLM call
 - duplicate work
 - introduce unnecessary nondeterminism
 - consume optional-research budget
-
-Instead, follow-up questions are deterministically converted into new `SubQuestion` objects.
-
----
-
-# Current Limitations
-
+Instead, follow-up questions are deterministically converted into new SubQuestion objects.
+Current Limitations
 The production graph is currently compiled without a persistent LangGraph checkpointer.
-
 The reservation/execution architecture ensures normal reducer ordering during a running graph execution, but it does not by itself provide crash-durable accounting across process termination.
-
 True crash-resume guarantees would require additional work such as:
-
-```text
 persistent checkpointer
 +
 durable operation reservations
 +
 idempotency strategy
-```
-
-The project therefore does not currently claim crash-safe resumability.
-
+The project therefore does not claim crash-safe resumability.
 Other current limitations include:
-
-```text
 Gemini is the only production LLM provider wired in bootstrap.py
 
 Tavily is the only production search provider wired in bootstrap.py
 
-Local Streamlit interface and CLI; no authenticated public hosting
+The full live Streamlit mode is local/private and has no user authentication
+
+Local research history is shared by browser sessions on the same app instance
+
+No public per-user history ownership is implemented
+
+No unrestricted public provider-quota/rate-limit layer is implemented
+
+Public deployment is therefore intentionally demo-only
 
 Search and webpage availability can vary between runs
 
 Some webpages may be inaccessible or unsupported
 
 External provider availability and rate limits can affect live runs
-```
-
----
-
-# Design Principles
-
-Both the CLI and Streamlit use the shared graph execution configuration in
-`graph/execution.py`. Its step limit scales with the configured maximum research
-iterations and leaves room for finalization; provider budgets remain enforced
-separately by the graph. Offline integration tests exercise both entry points
-through two and eight research rounds.
-
-The Gemini adapter translates known SDK API errors and HTTP transport failures
-into safe provider messages. SDK errors with status 429 indicate quota/rate limits;
-502, 503, and 504 indicate temporary unavailability. Tests construct actual SDK
-exception classes without making requests. Invalid SDK response JSON is classified
-as a response error. Unexpected programming errors retain their original type
-at the adapter boundary instead of being relabeled as provider outages; the web
-interface still presents safe messages. No adapter retries are added.
-
+Design Principles
+Both the CLI and Streamlit use shared graph execution configuration from:
+graph/execution.py
+The graph step limit scales with the configured maximum research iterations and leaves room for finalization.
+Provider budgets remain enforced separately by the graph.
+The Gemini adapter translates known SDK API errors and HTTP transport failures into safe provider-facing messages.
+Unexpected programming errors retain their original type at the adapter boundary instead of being mislabeled as provider outages.
+No automatic adapter retry layer is added.
 The project emphasizes:
-
-```text
 Bounded execution
 Deterministic validation
 Explicit orchestration
@@ -1031,317 +990,38 @@ Fail-closed behavior
 Security before convenience
 Testability
 Clear separation between transient and durable state
-```
-
+Progressive disclosure in the UI
+Local/private data boundaries
 The goal is not merely to demonstrate that an LLM can search the web.
-
-The goal is to demonstrate how an LLM-powered research system can be engineered so that search, evidence, citations, budgets, provider calls, and failure behavior are explicit and testable.
-
----
-
-# Development Status
-
+The goal is to demonstrate how an LLM-powered research system can be engineered so that search, evidence, citations, budgets, provider calls, persistence, failure behavior, and deployment boundaries are explicit and testable.
+Development Status
 Current development checkpoint:
-
-```text
-Production LangGraph        Implemented
-Planner                     Implemented
-Tavily Search               Implemented
-Safe Web Fetching           Implemented
-Evidence Extraction         Implemented
-Critic / Research Loop      Implemented
-Whole-Run Budgets           Implemented
-Grounded Synthesis          Implemented
-Semantic Verification       Implemented
-Safe Rejection Report       Implemented
-Citation Validation         Implemented
-Production Composition      Implemented
-CLI                         Implemented
-Live Provider Run           Verified
-Full Test Suite             1847 passing
-Persistent Checkpointing    Not yet implemented
-```
-
----
-
-# License
-
+Production LangGraph          Implemented
+Planner                       Implemented
+Tavily Search                 Implemented
+Safe Web Fetching             Implemented
+Evidence Extraction           Implemented
+Critic / Research Loop        Implemented
+Whole-Run Budgets             Implemented
+Grounded Synthesis            Implemented
+Semantic Verification         Implemented
+Safe Rejection Report         Implemented
+Citation Validation           Implemented
+Production Composition        Implemented
+CLI                           Implemented
+Streamlit UI                  Implemented
+Research Depth Presets        Implemented
+Local Research History        Implemented
+Saved-Run Comparison          Implemented
+Backup / Restore              Implemented
+Incomplete-Run Capture        Implemented
+Run Summaries                 Implemented
+Offline Demo                  Implemented
+Offline Evaluation Dashboard  Implemented
+Public Portfolio Demo Mode    Implemented
+Live Provider Run             Verified
+Full Test Suite               2124 passing
+Persistent Checkpointing      Not yet implemented
+Authenticated Public Live UI  Not implemented
+License
 No license has been selected yet.
-
-## Workspace isolation
-
-Each production graph invocation requires a fresh `ResearchGraphContext` and
-`TransientWorkspace`. Call `build_research_context(settings)` for each request,
-or `build_research_application(settings)` to build the graph and context together.
-The CLI already creates a fresh application for every `run_research()` call.
-
-The compiled graph can be reused with fresh contexts. Its initial node atomically
-claims the workspace before clearing temporary data, reserving budget, or calling
-providers. Sequential or concurrent reuse of the same workspace raises an error.
-The claim remains consumed after completion, failure, or `clear_all()`; start a new
-request with fresh dependencies rather than resetting a used workspace. Follow-up
-iterations within one invocation remain supported. This guard applies to the
-production graph entry point, not direct calls to individual orchestration nodes.
-It does not add retries, checkpoint resumability, or guarantees about the thread
-safety of provider clients manually shared between otherwise separate contexts.
-
-
-## Local web interface
-
-Install the project dependencies, then run from the project folder:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1 --server.port 8502 --browser.gatherUsageStats false
-```
-
-Open http://localhost:8502. Enter a question and select **Start research**.
-The page shows research progress, the completed report, source links and
-supporting excerpts, plus TXT and JSON downloads. Completed reports are saved locally and can be reopened from the sidebar
-after a restart. Unsubmitted question text remains session-only.
-
-The interface loads the project's `.env` file and uses the existing Gemini and
-Tavily configuration and research budgets. Every submitted request gets fresh
-dependencies and a fresh workspace. Viewing/downloading results does not rerun
-research. A failed request leaves the previous completed report available,
-clearly labeled with its own question. Provider error details and credentials
-are not displayed. Unverified fallback reports are labeled without claiming
-they contain a verified answer. The interface is local and has no authentication;
-it is not configured for public hosting.
-
-
-## Offline demo
-
-Turn on **Offline demo** near the top of the Streamlit page to explore a bundled,
-fictional library-policy example. It includes a sample answer, prepared citations,
-source excerpts, an illustrative run summary, and TXT/JSON downloads clearly marked
-`DEMO`. It does not perform search, fetch pages, call AI providers, read provider
-settings, or access research history. No API keys or internet connection are needed
-once the app and its dependencies are installed.
-
-The example is hand-authored, not a real or freshly verified research result.
-Its displayed example budget is simulated; actual provider calls are zero. Demo
-data uses a separate format and is never assigned to the real report or incomplete
-run session fields. Turn the toggle off to return to existing results and unsaved
-work. Normal session expiry and browser-refresh limitations still apply.
-
-## Research depth
-
-The Streamlit **Research depth** control offers three presets. **Standard** is
-selected initially. These are maximums, not targets or guarantees of answer
-quality, runtime, token consumption, or provider quota availability:
-
-| Mode | Rounds | Searches | Sources / page reads | AI calls |
-| --- | ---: | ---: | ---: | ---: |
-| Quick | 1 | 2 | 4 / 4 | 12 |
-| Standard | 2 | 5 | 8 / 8 | 32 |
-| Thorough | 3 | 8 | 12 / 12 | 64 |
-
-Every value is capped by the existing environment configuration. For example,
-the default two-round cap limits Thorough to two rounds. The interface shows the
-effective limits before submission. Modes also cap planned sub-questions at
-2/3/5, searches per round at 2/3/5, and results per search at 3/4/5 respectively.
-Changing modes does not edit `.env`, switch models, or start a request.
-
-All modes use the same grounding and semantic verification checks. The configured
-finalization reserve is preserved and must be at least two calls; a mode cannot
-start if its AI-call ceiling leaves no capacity beyond that reserve. The AI-call
-limit counts application-level calls; SDK retries and token usage are not estimated.
-
-Completed reports, incomplete entries, and their exports retain the selected mode
-and effective limits. Changing the selector does not relabel an earlier result.
-Older history entries remain readable without invented mode information. CLI
-runs continue to use their configured budgets directly.
-
-## Offline answer-quality scenarios
-
-### Local release-readiness report
-
-Run `python -m research_agent.release_readiness` to run the full offline suite and
-write Markdown and JSON reports under `.local/readiness/`. Use `--output-dir PATH`
-to choose another folder. The check records a source fingerprint and compares
-scenario results with the latest saved evaluation when available; missing or
-unreadable baselines are explicitly unassessed. It does not change research or
-evaluation history. Tests that fail, error, skip, or produce incomplete results
-prevent an offline pass. Source changes during the run also prevent a pass.
-
-Exit code 0 means offline checks passed, 1 means they need attention, and 2 means
-the check could not complete (including a three-minute timeout). A failed or timed
-out command must not be mistaken for a new report: earlier files may still exist.
-Live Gemini quality and human citation review remain pending regardless of the
-offline result; this report does not certify public deployment readiness.
-
-Turn on **Offline evaluation dashboard** in Streamlit and click **Run offline
-evaluations** to run the bundled suite in a separate process. The dashboard shows
-each scenario's result, failures grouped by category, and a downloadable JSON
-summary. It does not access research history or replace unsaved work. Completed
-evaluation reports are automatically saved separately in `.local/evaluation_history.sqlite`.
-Open a saved evaluation after restarting, or select a baseline to compare results.
-Identical scenario fixtures that go from passing to failed/error are regressions;
-skipped or missing results are lost coverage. Changed, added, removed, or older
-unidentified fixtures are labeled separately. Suite-level status is also shown.
-You can download comparison changes. Failed saves keep the current summary available
-to download and retry saving; reruns do not duplicate saved entries. Rerun after code
-changes to evaluate the current code. The local checkout must include the
-tests, evaluation fixtures, and pytest (`pip install -e ".[dev]"`). Runs have a
-90-second timeout and use temporary reports, with no provider calls.
-
-Run `python -m pytest tests/test_offline_evaluation.py -v` for nineteen fixed research
-scenarios covering grounded answers, citation provenance, semantic rejection,
-conflicting evidence, and insufficient evidence, including multiple sources and
-claims, swapped citations, rejection when any claim lacks support, and adversarial
-source instructions. They exercise the production
-graph with scripted providers and blocked network connections, using no quota.
-These are safeguard regression checks, not a benchmark of live Gemini quality:
-semantic verdicts and extracted evidence are supplied by the fixtures. Injection
-cases inspect real extraction/synthesis prompt boundaries and use a dummy secret;
-passing them does not establish live model resistance to prompt injection.
-See [the evaluation guide](evals/README.md) for case descriptions and report output.
-
-## Saved research history
-
-Turn on **Compare saved runs**, then select two distinct entries to view their
-answers, recorded outcomes, research depth, budget usage, and sources side by
-side. Comparison uses all saved history regardless of sidebar filters and keeps
-your current result and unsaved work intact. Incomplete runs show no completed
-answer; missing older metadata is labeled as not recorded. Source overlap uses
-exact available HTTP(S) URLs, not matching page contents. Counts are saved budget
-reservations rather than token usage or billing. This read-only view uses no
-provider calls and does not assign an answer-quality score.
-Choose **Download comparison (.md)** after selecting both runs to keep a portable
-Markdown snapshot with their saved entry IDs, questions, answers, outcomes, depth,
-budget usage, warnings, source lists, and shared/distinct source URLs. Research
-text is fenced as literal text so embedded HTML and image markup remain inert.
-The download uses the same loaded snapshots as the displayed comparison and does
-not change history or use provider quota.
-
-Select a saved report or incomplete run, then choose **Research this question
-again** in the sidebar to fill in its original question and recorded depth.
-Review or edit them above and click **Start research** when ready. Preparing a
-retry makes no provider calls and preserves the original history entry; starting
-research creates a fresh run rather than resuming collected evidence. The saved
-depth mode uses current configured limits. If no depth was recorded, your current
-selection is kept. Unsaved results must be saved or explicitly discarded before
-preparing another run.
-
-Expand **Filter saved research** to combine search with run status, saved research
-depth, and optional From/Through dates. Dates are inclusive and use UTC, matching
-the history labels. **Not recorded** finds older runs without depth metadata;
-it does not infer a mode from their budget. Invalid date ranges show a warning.
-**Clear history filters** resets these filters while keeping your search text.
-Filtering does not open a report, change unsaved work, or use provider quota.
-Unreadable depth metadata is excluded when a depth filter is selected.
-
-The **Research outcome** filter distinguishes verified answers, runs with no
-evidence, answers rejected by verification, insufficient budget for final answer
-checks, other runs without a verified answer, and interrupted runs. These use the
-saved outcome, not guesses based on report wording or citation counts. Older
-completed reports with missing or unknown outcomes appear under **Not recorded**;
-incomplete runs remain **Interrupted run**, even without a summary. Unreadable
-records are excluded when an outcome filter is selected. Outcome filters combine
-with all other filters and search, and reset with **Clear history filters**.
-
-Use **Search saved research** in the sidebar to find text in saved questions,
-report bodies, source titles, or evidence excerpts, including incomplete runs.
-Search matches a literal substring, ignores letter case, and trims outer spaces;
-results keep their newest-first order. Empty searches show all entries. Searches
-run locally without provider calls and do not change saved or unsaved research.
-Damaged entries remain searchable by question, but their invalid contents are
-excluded so they cannot prevent other results from appearing.
-Each search result includes a short match preview; selecting it shows the excerpt
-below the list before you open the report. Previews use original text and label
-the matching field: question, report text, source title, or evidence excerpt.
-When multiple fields match, the first in that order is shown. Long excerpts are
-trimmed around the match with ellipses. Previews do not change saved content.
-
-### Backup and restore
-
-In the sidebar, expand **History backup & restore**, choose **Prepare history
-backup**, then download the JSON file. The snapshot includes all saved completed
-and incomplete runs, evidence, citations, depth settings, and recorded summaries.
-It excludes unsaved session results, provider configuration, and demo data. Keep
-the file private because it contains your research content.
-
-Choose a backup file to preview its entry counts, then select **Restore missing
-history**. All records are validated before writing. Restore merges in one
-transaction: identical IDs/content are skipped, and conflicting IDs cancel the
-entire restore without overwriting existing history. Repeating a restore is safe.
-The active result and unsaved work are not replaced. Invalid files, unsupported
-versions, broken evidence references, and backups over 20 MB or 5,000 entries
-are rejected. Restore checks data structure; it does not reverify research claims.
-
-Backups use a consistent SQLite read snapshot while the app is running. Preparing
-a new download is explicit; an earlier prepared download does not automatically
-include later research. If any stored record is invalid, export fails rather than
-silently omitting it. Neither backup nor restore makes provider calls.
-
-### Run summaries
-
-New web-interface runs retain a **Run summary** in history and exports, including
-incomplete runs. The table compares committed research-round, search, source,
-page-read, and AI-call budgets against the actual limits for that run. These are
-reservation counters, not provider billing totals: failed attempts consume budget,
-and finalization reserves both calls before either executes. A failure during the
-first finalization call can therefore still account for two reserved AI calls.
-
-The graph records why research stopped before finalization spends its reserve:
-sufficient evidence, no further/new questions, or the first budget blocking another
-round. The summary separately states whether finalization produced verified
-citations, found no evidence, lacked finalization budget, or discarded a rejected
-answer. An incomplete run records its safe failure category instead. No rejected
-drafts, raw provider errors, or secrets are added to summaries.
-
-Older saved results still open normally and show that detailed summaries were not
-recorded. Missing AI/page-read totals and stop reasons are never reconstructed
-from current settings or guessed from old report text.
-
-Completed web-interface runs are automatically saved to
-`.local/research_history.sqlite` inside this project. The **Saved research**
-sidebar lets you search by question and open any saved report, including its
-citations, source URLs, supporting evidence, usage counts and diagnostic notices.
-Opening or downloading a saved report makes no provider calls. Runs returning
-an insufficient-evidence fallback are saved with their original warnings;
-graph runs interrupted by an exception are saved separately as **Incomplete**
-entries with the question, collected sources and evidence, counters, last recorded
-stage, and a fixed explanation of why the run stopped. Configuration failures
-before graph execution do not create an entry.
-
-History is local to this project and shared by browser sessions on this computer.
-It is excluded from Git. It contains report content and extracted evidence, not
-API keys, runtime contexts, or full fetched webpages. Back up the SQLite file
-while the app is stopped if you want an independent copy of your history.
-Save failures leave the report available in the current session with downloads
-and a retry button. Reports created before this feature are not recovered from
-closed sessions; an existing open result can be saved with **Save report to history**.
-
-### Incomplete research
-
-An incomplete entry has no report, draft answer, or citations. Opening it shows
-collected source excerpts and offers a JSON download, with an explicit warning
-that the run did not produce a verified answer. Rejected synthesis text and raw
-exception messages are never included in its snapshot. Existing completed
-reports remain available in history; they are not displayed as the interrupted
-run's answer. Verification rejections already handled by the graph continue to
-produce their existing, clearly labeled fallback reports.
-
-Incomplete entries capture the last graph state delivered to the interface when
-an ordinary execution exception is caught. They are **not checkpoints**: stopping
-the process, closing the app during execution, cancellation, or a power failure
-does not guarantee a saved partial run. Opening an entry makes no provider calls
-and does not resume execution. Submitting the question again starts a fresh run.
-If local saving fails, the current incomplete entry remains downloadable and can
-be saved using **Save incomplete run**. Download or save it before navigating away.
-
-### Protecting unsaved work
-
-If a report or incomplete run has not been saved, starting new research and
-opening another history entry are blocked before any provider call or replacement.
-The current result stays available for download and retrying its save. This also
-protects results left in sessions from before automatic history saving existed.
-After saving, click the desired action again; blocked requests are not queued.
-
-If saving remains unavailable, download your result, open **Discard unsaved
-research…**, and select **Discard unsaved session copies** to continue. This
-explicit action removes only unsaved session results, not saved history or
-downloaded files. Session-only results still cannot survive a browser refresh,
-session expiry, or process shutdown, so save or download them before leaving.

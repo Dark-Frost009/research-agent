@@ -18,32 +18,32 @@ Evidence extraction uses a parent-allocation design.
 Phase 1 - describe work:
 
     SubQuestion + successful SourceFetchResult
-        ↓
+        â†“
     EvidenceRequest
 
 Phase 2 - centrally authorize the full batch:
 
     EvidenceRequest[]
-        ↓
+        â†“
     prepare_evidence_batch(...)
-        ↓
+        â†“
     count nonblank webpages requiring LLM work
-        ↓
+        â†“
     BudgetPolicy.authorize_llm_calls(
         requested=N,
         purpose="optional_research",
     )
-        ↓
+        â†“
     deterministic authorized prefix
-        ↓
+        â†“
     EvidenceBatch
 
 Phase 3 - provider side effects:
 
     EvidenceBatch.calls
-        ↓
+        â†“
     EvidenceExtractor.extract(EvidenceCall)
-        ↓
+        â†“
     LLM
 
 The EvidenceBatch exposes ``llm_calls_used`` so orchestration can persist one
@@ -58,8 +58,10 @@ budget by authorizing several calls from the same stale BudgetUsage snapshot.
 Evidence extraction is optional research and therefore must not consume the
 protected finalization reserve.
 
-Grounding remains atomic and fail-closed: every proposed excerpt is validated
-before any trusted Evidence ID is created.
+Grounding is candidate-level and fail-closed: only verbatim excerpts become
+trusted Evidence. Non-verbatim candidates are rejected individually without
+discarding valid siblings, and every accepted candidate is validated before a
+trusted Evidence ID is created.
 """
 
 from __future__ import annotations
@@ -131,7 +133,61 @@ class EvidenceResponse(_EvidenceSchema):
 class EvidenceGroundingError(
     LLMResponseError
 ):
-    """Raised when proposed evidence is not grounded in the webpage."""
+    """Indicate that proposed evidence was not grounded in the webpage."""
+
+
+@dataclass(frozen=True)
+class EvidenceExtractionResult:
+    """Outcome of one evidence-extraction worker call.
+
+    ``evidence`` contains only trusted, verbatim-grounded Evidence objects.
+
+    ``grounding_rejections`` counts proposed excerpts that were discarded
+    because they were not exact substrings of the fetched webpage text.
+    """
+
+    evidence: list[Evidence]
+    grounding_rejections: int = 0
+
+    def __post_init__(
+        self,
+    ) -> None:
+        if not isinstance(
+            self.evidence,
+            list,
+        ):
+            raise TypeError(
+                "evidence must be a list."
+            )
+
+        for item in self.evidence:
+            if not isinstance(
+                item,
+                Evidence,
+            ):
+                raise TypeError(
+                    "evidence must contain only "
+                    "Evidence objects."
+                )
+
+        if (
+            isinstance(
+                self.grounding_rejections,
+                bool,
+            )
+            or not isinstance(
+                self.grounding_rejections,
+                int,
+            )
+        ):
+            raise TypeError(
+                "grounding_rejections must be an integer."
+            )
+
+        if self.grounding_rejections < 0:
+            raise ValueError(
+                "grounding_rejections must be non-negative."
+            )
 
 
 IDFactory = Callable[[], str]
@@ -642,7 +698,7 @@ class EvidenceExtractor:
     def extract(
         self,
         call: EvidenceCall,
-    ) -> list[Evidence]:
+    ) -> EvidenceExtractionResult:
         """Execute one already-authorized evidence-extraction operation."""
 
         if not isinstance(
@@ -665,11 +721,15 @@ class EvidenceExtractor:
         # A successfully fetched page can contain no meaningful text.
         # This is deterministic and costs zero LLM calls.
         if not call.requires_llm:
-            return []
+            return EvidenceExtractionResult(
+                evidence=[],
+            )
 
         # Budget exhaustion is expected control flow.
         if not call.authorized:
-            return []
+            return EvidenceExtractionResult(
+                evidence=[],
+            )
 
         user_prompt = (
             build_evidence_user_prompt(
@@ -701,9 +761,10 @@ class EvidenceExtractor:
                 "unexpected response type."
             )
 
-        # Atomic fail-closed boundary:
-        # validate every candidate before generating trusted IDs.
-        self._validate_grounding(
+        (
+            grounded_candidates,
+            grounding_rejections,
+        ) = self._partition_grounded_candidates(
             response=response,
             webpage_text=page.text,
         )
@@ -716,7 +777,7 @@ class EvidenceExtractor:
             Evidence
         ] = []
 
-        for candidate in response.evidence:
+        for candidate in grounded_candidates:
             evidence_id = (
                 self._id_factory()
             )
@@ -771,34 +832,38 @@ class EvidenceExtractor:
                 )
             )
 
-        return evidence_items
+        return EvidenceExtractionResult(
+            evidence=evidence_items,
+            grounding_rejections=(
+                grounding_rejections
+            ),
+        )
 
     @staticmethod
-    def _validate_grounding(
+    def _partition_grounded_candidates(
         *,
         response: EvidenceResponse,
         webpage_text: str,
-    ) -> None:
-        """Verify every proposed excerpt exists verbatim in the page."""
+    ) -> tuple[
+        list[EvidenceCandidate],
+        int,
+    ]:
+        """Keep only exact excerpts and count non-verbatim rejections."""
 
         seen_excerpts: set[
             str
         ] = set()
 
+        grounded_candidates: list[
+            EvidenceCandidate
+        ] = []
+
+        grounding_rejections = 0
+
         for candidate in response.evidence:
             excerpt = (
                 candidate.excerpt
             )
-
-            if (
-                excerpt
-                not in webpage_text
-            ):
-                raise EvidenceGroundingError(
-                    "LLM proposed an evidence "
-                    "excerpt that does not exist "
-                    "verbatim in the fetched webpage."
-                )
 
             if excerpt in seen_excerpts:
                 raise LLMResponseError(
@@ -809,3 +874,19 @@ class EvidenceExtractor:
             seen_excerpts.add(
                 excerpt
             )
+
+            if (
+                excerpt
+                not in webpage_text
+            ):
+                grounding_rejections += 1
+                continue
+
+            grounded_candidates.append(
+                candidate
+            )
+
+        return (
+            grounded_candidates,
+            grounding_rejections,
+        )

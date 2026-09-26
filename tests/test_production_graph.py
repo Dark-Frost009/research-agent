@@ -1,25 +1,29 @@
 """End-to-end tests for the compiled production Research Agent graph.
 
+
+
 All external side effects are replaced with deterministic test doubles.
 
+
+
 These tests exercise the real production graph topology, reducers,
+
 reservation/execution orchestration, critique routing, follow-up iteration,
+
 finalization, and ResearchReport assembly.
 
+
+
 They do not claim crash-durable accounting or checkpoint resumability.
+
 """
-
 from __future__ import annotations
-
 from dataclasses import replace
-
 import pytest
-
 from datetime import (
     datetime,
     timezone,
 )
-
 from research_agent.graph.budget import (
     BudgetLimits,
     BudgetPolicy,
@@ -36,6 +40,7 @@ from research_agent.graph.nodes.critic import (
 )
 from research_agent.graph.nodes.evidence import (
     EvidenceCall,
+    EvidenceExtractionResult,
 )
 from research_agent.graph.nodes.evidence_collector import (
     EvidenceCollector,
@@ -83,8 +88,6 @@ from research_agent.models.schemas import (
 from research_agent.tools.web_extract import (
     FetchedPage,
 )
-
-
 QUESTION = "What is the evidence for this topic?"
 
 
@@ -150,12 +153,9 @@ class GraphPlanner(Planner):
         self.entered_calls.append(
             call
         )
-
         if not call.authorized:
             return []
-
         self.provider_calls += 1
-
         return list(
             self.planned
         )
@@ -178,15 +178,12 @@ class GraphSearchNode(SearchNode):
         self.seen_batches.append(
             batch
         )
-
         results: list[
             SearchResult
         ] = []
-
         for sub_question in batch.sub_questions:
             self.provider_calls += 1
             self.result_counter += 1
-
             results.append(
                 SearchResult(
                     sub_question_id=(
@@ -212,7 +209,6 @@ class GraphSearchNode(SearchNode):
                     provider="fake",
                 )
             )
-
         return results
 
 
@@ -232,14 +228,11 @@ class GraphSourceFetcher(SourceFetcher):
         self.seen_batches.append(
             batch
         )
-
         results: list[
             SourceFetchResult
         ] = []
-
         for source in batch.sources:
             self.network_calls += 1
-
             page = FetchedPage(
                 requested_url=source.url,
                 final_url=source.url,
@@ -250,7 +243,6 @@ class GraphSourceFetcher(SourceFetcher):
                     f"{self.network_calls}."
                 ),
             )
-
             fetched_source = (
                 source.model_copy(
                     update={
@@ -270,7 +262,6 @@ class GraphSourceFetcher(SourceFetcher):
                     }
                 )
             )
-
             results.append(
                 SourceFetchResult(
                     source=fetched_source,
@@ -278,7 +269,6 @@ class GraphSourceFetcher(SourceFetcher):
                     error=None,
                 )
             )
-
         return results
 
 
@@ -293,47 +283,43 @@ class GraphEvidenceExtractor:
     def extract(
         self,
         call: EvidenceCall,
-    ) -> list[Evidence]:
+    ) -> EvidenceExtractionResult:
         self.calls.append(
             call
         )
-
         page = call.fetch_result.page
-
         assert page is not None
-
         excerpt = ""
-
         for line in page.text.splitlines():
             if line.startswith(
                 "Evidence sentence "
             ):
                 excerpt = line
                 break
-
         assert excerpt
-
-        return [
-            Evidence(
-                id=(
-                    f"ev-"
-                    f"{len(self.calls)}"
-                ),
-                source_id=(
-                    call.fetch_result
-                    .source
-                    .id
-                ),
-                sub_question_id=(
-                    call.sub_question.id
-                ),
-                excerpt=excerpt,
-                relevance_note=(
-                    "Relevant to the "
-                    "research question."
-                ),
-            )
-        ]
+        return EvidenceExtractionResult(
+            evidence=[
+                Evidence(
+                    id=(
+                        f"ev-"
+                        f"{len(self.calls)}"
+                    ),
+                    source_id=(
+                        call.fetch_result
+                        .source
+                        .id
+                    ),
+                    sub_question_id=(
+                        call.sub_question.id
+                    ),
+                    excerpt=excerpt,
+                    relevance_note=(
+                        "Relevant to the "
+                        "research question."
+                    ),
+                )
+            ],
+        )
 
 
 class GraphCritic(Critic):
@@ -359,7 +345,6 @@ class GraphCritic(Critic):
         self.entered_calls.append(
             call
         )
-
         if not call.requires_llm:
             return CritiqueResult(
                 sufficient=False,
@@ -370,7 +355,6 @@ class GraphCritic(Critic):
                     call.original_question
                 ],
             )
-
         if not call.authorized:
             return CritiqueResult(
                 sufficient=False,
@@ -380,11 +364,9 @@ class GraphCritic(Critic):
                 ],
                 follow_up_questions=[],
             )
-
         index = (
             self.provider_llm_calls
         )
-
         if index >= len(
             self.outcomes
         ):
@@ -392,9 +374,7 @@ class GraphCritic(Critic):
                 "GraphCritic received more "
                 "authorized calls than expected."
             )
-
         self.provider_llm_calls += 1
-
         return self.outcomes[
             index
         ]
@@ -416,7 +396,6 @@ class GraphSynthesizer(Synthesizer):
         self.entered_calls.append(
             call
         )
-
         if not call.requires_llm:
             return SynthesisResult(
                 content=(
@@ -426,7 +405,6 @@ class GraphSynthesizer(Synthesizer):
                 ),
                 citations=[],
             )
-
         if not call.fully_authorized:
             return SynthesisResult(
                 content=(
@@ -436,20 +414,15 @@ class GraphSynthesizer(Synthesizer):
                 ),
                 citations=[],
             )
-
         self.provider_llm_calls += 2
-
         evidence = list(
             call.evidence
         )
-
         assert evidence
-
         content = (
             "The accumulated evidence "
             "supports the final answer."
         )
-
         citation = Citation(
             id="cit-final",
             claim_text=content,
@@ -458,7 +431,6 @@ class GraphSynthesizer(Synthesizer):
                 for item in evidence
             ],
         )
-
         return SynthesisResult(
             content=content,
             citations=[
@@ -518,7 +490,6 @@ def test_production_graph_completes_sufficient_first_iteration() -> None:
             _initial_sub_question()
         ]
     )
-
     search_node = GraphSearchNode()
     source_fetcher = (
         GraphSourceFetcher()
@@ -526,7 +497,6 @@ def test_production_graph_completes_sufficient_first_iteration() -> None:
     evidence_extractor = (
         GraphEvidenceExtractor()
     )
-
     critic = GraphCritic(
         outcomes=[
             CritiqueResult(
@@ -540,11 +510,9 @@ def test_production_graph_completes_sufficient_first_iteration() -> None:
             )
         ]
     )
-
     synthesizer = (
         GraphSynthesizer()
     )
-
     context = _context(
         planner=planner,
         search_node=search_node,
@@ -557,7 +525,6 @@ def test_production_graph_completes_sufficient_first_iteration() -> None:
         critic=critic,
         synthesizer=synthesizer,
     )
-
     result = (
         build_research_graph()
         .invoke(
@@ -565,94 +532,72 @@ def test_production_graph_completes_sufficient_first_iteration() -> None:
             context=context,
         )
     )
-
     assert result[
         "iteration_count"
     ] == 1
-
     assert result[
         "search_queries_used"
     ] == 1
-
     assert result[
         "source_fetches_used"
     ] == 1
-
     # Planner 1 + evidence 1 + critique 1
     # + protected finalization pair 2.
     assert result[
         "llm_calls_used"
     ] == 5
-
     assert planner.provider_calls == 1
     assert search_node.provider_calls == 1
     assert source_fetcher.network_calls == 1
-
     assert len(
         evidence_extractor.calls
     ) == 1
-
     assert (
         critic.provider_llm_calls
         == 1
     )
-
     assert (
         synthesizer.provider_llm_calls
         == 2
     )
-
     assert len(
         result["sub_questions"]
     ) == 1
-
     assert len(
         result["search_results"]
     ) == 1
-
     assert len(
         result["sources"]
     ) == 1
-
     assert len(
         result["evidence"]
     ) == 1
-
     assert (
         "PRIVATE RAW PAGE DATA"
         not in repr(result)
     )
-
     assert isinstance(
         result["final_report"],
         ResearchReport,
     )
-
     report = result[
         "final_report"
     ]
-
     assert report is not None
-
     assert report.question == QUESTION
-
     assert report.content == (
         "The accumulated evidence "
         "supports the final answer."
     )
-
     assert report.content == (
         result["draft_content"]
     )
-
     assert report.citations == (
         result["citations"]
     )
-
     assert len(
         report.citations
     ) == 1
-
     assert report.citations[
         0
     ].evidence_ids == [
@@ -665,13 +610,11 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
         "What additional evidence "
         "resolves the remaining gap?"
     )
-
     planner = GraphPlanner(
         planned=[
             _initial_sub_question()
         ]
     )
-
     search_node = GraphSearchNode()
     source_fetcher = (
         GraphSourceFetcher()
@@ -679,7 +622,6 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
     evidence_extractor = (
         GraphEvidenceExtractor()
     )
-
     critic = GraphCritic(
         outcomes=[
             CritiqueResult(
@@ -707,11 +649,9 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
             ),
         ]
     )
-
     synthesizer = (
         GraphSynthesizer()
     )
-
     context = _context(
         planner=planner,
         search_node=search_node,
@@ -724,7 +664,6 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
         critic=critic,
         synthesizer=synthesizer,
     )
-
     result = (
         build_research_graph()
         .invoke(
@@ -732,21 +671,17 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
             context=context,
         )
     )
-
     # Initial iteration + one critique-driven follow-up.
     assert result[
         "iteration_count"
     ] == 2
-
     # One query in each iteration.
     assert result[
         "search_queries_used"
     ] == 2
-
     assert result[
         "source_fetches_used"
     ] == 2
-
     # Planner       1
     # Evidence      2
     # Critique      2
@@ -756,94 +691,74 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
     assert result[
         "llm_calls_used"
     ] == 7
-
     # Planner must run only for the initial iteration.
     assert planner.provider_calls == 1
-
     assert len(
         planner.entered_calls
     ) == 1
-
     # Search executes once for the Planner output and once for the
     # Critic-generated follow-up.
     assert len(
         search_node.seen_batches
     ) == 2
-
     assert (
         search_node.provider_calls
         == 2
     )
-
     assert (
         source_fetcher.network_calls
         == 2
     )
-
     assert len(
         evidence_extractor.calls
     ) == 2
-
     assert (
         critic.provider_llm_calls
         == 2
     )
-
     assert len(
         critic.entered_calls
     ) == 2
-
     assert (
         synthesizer.provider_llm_calls
         == 2
     )
-
     assert len(
         synthesizer.entered_calls
     ) == 1
-
     assert len(
         result["sub_questions"]
     ) == 2
-
     initial_sub_question = (
         result["sub_questions"][0]
     )
-
     follow_up_sub_question = (
         result["sub_questions"][1]
     )
-
     assert (
         initial_sub_question
         .created_at_iteration
         == 0
     )
-
     assert (
         follow_up_sub_question.question
         == follow_up_question
     )
-
     assert (
         follow_up_sub_question
         .created_at_iteration
         == 1
     )
-
     assert (
         follow_up_sub_question.id
         != initial_sub_question.id
     )
-
     first_batch = (
         search_node.seen_batches[0]
     )
-
     second_batch = (
         search_node.seen_batches[1]
     )
-
     assert [
         item.id
         for item
@@ -851,7 +766,6 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
     ] == [
         initial_sub_question.id
     ]
-
     assert [
         item.id
         for item
@@ -859,19 +773,15 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
     ] == [
         follow_up_sub_question.id
     ]
-
     assert len(
         result["search_results"]
     ) == 2
-
     assert len(
         result["sources"]
     ) == 2
-
     assert len(
         result["evidence"]
     ) == 2
-
     assert {
         item.sub_question_id
         for item
@@ -880,44 +790,33 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
         initial_sub_question.id,
         follow_up_sub_question.id,
     }
-
     assert (
         "PRIVATE RAW PAGE DATA"
         not in repr(result)
     )
-
     final_critique = result[
         "critique"
     ]
-
     assert final_critique is not None
     assert final_critique.sufficient is True
-
     assert isinstance(
         result["final_report"],
         ResearchReport,
     )
-
     report = result[
         "final_report"
     ]
-
     assert report is not None
-
     assert report.question == QUESTION
-
     assert report.content == (
         result["draft_content"]
     )
-
     assert report.citations == (
         result["citations"]
     )
-
     assert len(
         report.citations
     ) == 1
-
     assert set(
         report.citations[
             0
@@ -927,6 +826,7 @@ def test_production_graph_runs_critique_follow_up_without_replanning() -> None:
         for item
         in result["evidence"]
     }
+
 
 class RejectedSynthesisLLM:
     """Provider responses exercise both real synthesis trust gates."""
@@ -966,7 +866,6 @@ def test_production_graph_rejection_returns_safe_report(reject_grounding: bool) 
     def citation_id():
         citation_ids.append("unexpected-citation")
         return citation_ids[-1]
-
     context = _context(
         planner=GraphPlanner(planned=[_initial_sub_question()]),
         search_node=GraphSearchNode(),
@@ -982,7 +881,6 @@ def test_production_graph_rejection_returns_safe_report(reject_grounding: bool) 
         _initial_state(), context=context, stream_mode="values",
     ):
         states.append(state)
-
     expected_calls = [SynthesisResponse]
     if not reject_grounding:
         expected_calls.append(SynthesisVerificationResponse)
@@ -1011,6 +909,8 @@ def test_production_graph_rejection_returns_safe_report(reject_grounding: bool) 
     ("max_source_fetches_per_run", 2),
     ("max_llm_calls_per_run", 7),
 ])
+
+
 def test_production_graph_exhausts_budget_after_follow_up(resource, limit) -> None:
     policy = _policy(max_research_iterations=3)
     policy = BudgetPolicy(limits=replace(policy.limits, **{resource: limit}))
@@ -1054,16 +954,13 @@ def test_production_graph_denied_real_critic_preserves_finalization() -> None:
     class ForbiddenCriticLLM:
         def generate_structured(self, **kwargs):
             pytest.fail("Denied Critic must not call its provider")
-
     class RecordingCritic(Critic):
         def __init__(self):
             super().__init__(llm=ForbiddenCriticLLM(), max_follow_up_questions=2)
             self.calls = []
-
         def critique(self, call):
             self.calls.append(call)
             return super().critique(call)
-
     critic = RecordingCritic()
     synthesizer = GraphSynthesizer()
     search = GraphSearchNode()
@@ -1099,14 +996,12 @@ def test_production_graph_denied_real_critic_preserves_finalization() -> None:
 @pytest.mark.parametrize("error_type", [LLMProviderError, RuntimeError])
 def test_production_graph_finalization_operational_errors_propagate(failed_stage, error_type):
     failure = error_type("Operational failure")
-
     class FailingLLM(RejectedSynthesisLLM):
         def generate_structured(self, **kwargs):
             if kwargs["response_model"] is failed_stage:
                 self.calls.append(failed_stage)
                 raise failure
             return super().generate_structured(**kwargs)
-
     llm = FailingLLM()
     context = _context(
         planner=GraphPlanner(planned=[_initial_sub_question()]),
@@ -1130,7 +1025,6 @@ def test_production_graph_finalization_operational_errors_propagate(failed_stage
     assert all(state["citations"] == [] for state in states)
     assert "REJECTED DRAFT" not in repr(states)
     assert context.workspace.finalization_call is None
-
 
 
 def _isolated_context(planner=None):
@@ -1167,7 +1061,6 @@ def test_production_graph_failed_workspace_cannot_be_reset_for_reuse():
         def plan(self, call):
             super().plan(call)
             raise LLMProviderError("test failure")
-
     context = _isolated_context(FailingPlanner(planned=[_initial_sub_question()]))
     graph = build_research_graph()
     with pytest.raises(LLMProviderError, match="test failure"):
@@ -1181,16 +1074,13 @@ def test_production_graph_failed_workspace_cannot_be_reset_for_reuse():
 def test_production_graph_rejects_overlapping_workspace_reuse():
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-
     entered, release = Event(), Event()
-
     class BlockingPlanner(GraphPlanner):
         def plan(self, call):
             result = super().plan(call)
             entered.set()
             assert release.wait(10), "Test did not release first run"
             return result
-
     context = _isolated_context(BlockingPlanner(planned=[_initial_sub_question()]))
     graph = build_research_graph()
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -1213,15 +1103,12 @@ def test_production_graph_rejects_overlapping_workspace_reuse():
 def test_production_graph_fresh_workspaces_keep_runs_isolated(overlap):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
-
     barrier = Barrier(2) if overlap else None
-
     class IndependentPlanner(GraphPlanner):
         def plan(self, call):
             if barrier is not None:
                 barrier.wait(timeout=10)
             return super().plan(call)
-
     contexts = [_isolated_context(IndependentPlanner(planned=[SubQuestion(
         id=f"sq-{name}", question=f"Evidence for {name}?", created_at_iteration=0
     )])) for name in ("alpha", "beta")]

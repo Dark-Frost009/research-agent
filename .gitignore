@@ -4,6 +4,9 @@
 # Environment variables / secrets
 .env
 
+# Streamlit local secrets
+.streamlit/secrets.toml
+
 # Python cache
 __pycache__/
 *.py[cod]
