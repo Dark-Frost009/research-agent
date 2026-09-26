@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "research-agent"
 version = "0.1.0"
 description = "A LangGraph-based research agent with grounded citations and iterative critique."
-requires-python = ">=3.12"
+requires-python = ">=3.12,<4"
 
 dependencies = [
     "pydantic>=2.9,<3",
