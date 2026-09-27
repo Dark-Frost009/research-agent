@@ -40,12 +40,14 @@ class TavilySearchClient:
         api_key: str | None = None,
         *,
         client: Any | None = None,
+        bounded_requests: bool = False,
     ) -> None:
         """Create a Tavily search adapter.
 
         `client` exists primarily for testing and dependency injection.
         When a client is supplied, no real Tavily client is created.
         """
+        self._bounded_requests = bounded_requests
         if client is not None:
             self._client = client
             return
@@ -91,6 +93,8 @@ class TavilySearchClient:
                 query=clean_query,
                 max_results=max_results,
                 include_raw_content=False,
+                **({'timeout': 15, 'search_depth': 'basic', 'auto_parameters': False}
+                   if self._bounded_requests else {}),
             )
         except Exception as exc:
             raise SearchProviderError("Tavily search request failed.") from exc

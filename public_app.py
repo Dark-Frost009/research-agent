@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
 import streamlit as st
 from research_agent.incomplete import ResearchInterrupted
 from research_agent.public_service import (
-    PublicConfig, PublicInputError, ServiceBusyError, run_visitor_question,
+    PublicConfig, PublicInputError, ServiceBusyError, AdmissionError,
+    ResearchTimeoutError, run_visitor_question,
 )
 
 
@@ -77,6 +78,9 @@ st.info('Your keys are sent to this server and used to contact Gemini and Tavily
         'content are sent to those providers. Do not enter confidential information.')
 st.caption('This version keeps results in your current session only. It does not '
            'save keys or research to a history database. Download results before leaving.')
+st.caption('Usage protection stores a hashed account identifier and run timestamps on this server, '
+           'with records older than 24 hours removed at the next admission check. '
+           'It stores no keys, questions or reports.')
 st.button('Clear keys and results', on_click=clear_private_session)
 
 with st.form('research'):
@@ -84,7 +88,9 @@ with st.form('research'):
     st.text_input('Tavily API key', type='password', key='tavily_key', max_chars=512)
     st.text_area('Research question', key='question', max_chars=2000)
     st.caption('Per run: up to 1 research round, 2 searches, 4 sources and 12 AI calls. '
-               'These are application limits, not a price guarantee.')
+               'Up to 3 starts per rolling hour and 10 per rolling day per account, '
+               'with one active run per account and a three-minute cutoff. Failed runs count. '
+               'Shared service limits also apply. These limits are not a price guarantee.')
     st.checkbox('I authorize this run using my keys and understand provider charges may apply.', key='consent')
     submitted = st.form_submit_button('Start research')
 
@@ -100,9 +106,13 @@ if submitted:
                     st.session_state.question, lambda message: status.update(label=message),
                     gemini_key=st.session_state.gemini_key,
                     tavily_key=st.session_state.tavily_key, model=config.gemini_model,
+                    identity=identity,
                 )
-            except (PublicInputError, ServiceBusyError) as exc:
+            except (PublicInputError, ServiceBusyError, AdmissionError) as exc:
                 status.update(label='Research did not start', state='error')
+                st.warning(str(exc))
+            except ResearchTimeoutError as exc:
+                status.update(label='Research timed out', state='error')
                 st.warning(str(exc))
             except ResearchInterrupted as exc:
                 status.update(label='Research incomplete', state='error')

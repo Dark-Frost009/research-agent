@@ -1,6 +1,6 @@
 # Public service: bring your own keys
 
-Status: local implementation foundation, **not approved for public deployment**.
+Status: Google sign-in staging deployed and verified; live public research remains disabled pending launch checks.
 
 `public_app.py` is separate from the existing local `app.py` and offline demo.
 Visitors supply both Gemini and Tavily keys. The application does not fall back
@@ -33,18 +33,54 @@ when building the deployment environment; never commit `secrets.toml`.
 ## Current limits
 
 Runs are limited to 1 round, 2 searches, 4 sources, 4 page reads and 12 application
-AI-call reservations. Two runs can execute simultaneously per Python process.
-The in-process semaphore is only a capacity guard: it is not a persistent or
-distributed abuse limiter. Provider retries and token charges are not represented
-by reservation counts. Public output renders untrusted research as plain text.
+AI-call reservations. Public research uses a disposable subprocess, killed and
+reaped by the parent at 180 seconds. A worker watchdog also exits at 180 seconds
+if its parent disappears. In-flight remote requests may still complete or incur
+charges after local termination; a timeout does not refund provider usage.
+No partial evidence is recovered on a hard timeout. Completed and interrupted
+results cross an anonymous pipe as JSON; keys are never put in process arguments,
+temporary files or logs. Worker stdout/stderr logging is suppressed.
+
+Public Gemini requests have a 30-second SDK timeout and one attempt (no automatic
+SDK retries). Public Tavily searches have a 15-second timeout, basic search depth,
+and automatic parameter selection disabled; the current SDK uses a requests
+session with no automatic retries. Page reads retain their 15-second timeout.
+Transport timeouts are not a substitute for the enforced overall deadline.
+These settings do not change the local research app's provider defaults.
+
+Admission uses SQLite transactions, shared across sessions and processes that
+use the same database file. Limits count starts, including failed and timed-out
+runs, in rolling windows:
+
+- Per verified issuer/subject: 3 starts/hour, 10/day, one active run.
+- Whole host: 60 starts/hour, 200/day, two active runs.
+- A crashed run occupies its slot for at most 240 seconds from admission.
+- A missing identity, unreadable/corrupt database or lock timeout blocks research.
+- Clearing session keys or signing out does not reset counters.
+
+`PUBLIC_USAGE_DB` optionally sets the SQLite file path. Its default is
+`.local/public-usage.sqlite3` under the application root, ignored by Git.
+The store contains only a SHA-256 hash of issuer/subject, a random run ID and
+timestamps. This hash is a pseudonymous identifier, not anonymous data.
+Rows older than 24 hours are deleted at the next admission check after their
+active lease expires; storage is not a forensic secure-erasure guarantee.
+Backups of this database require their own retention policy.
+
+Counters survive process restarts on the same disk. Streamlit Community Cloud
+disk replacement/redeployment can reset them. Multiple hosts with separate files
+do not share these limits. This is a single-host protection, not durable distributed
+abuse prevention or an edge request limiter. Keep live public research disabled
+until that deployment limitation has an accepted solution. No paid storage has
+been provisioned. Public output renders untrusted research as plain text.
 
 ## Required before launch
 
 1. Target: https://research-agent-frosty.streamlit.app/ with mandatory sign-in.
-   Configure Google sign-in using [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md) and
-   verify its callback on this exact host.
-2. Add durable per-user/global request quotas and edge connection/request limits;
-   implement bounded execution time and provider timeouts/retry policy.
+   Google callback and logout were verified on this host. See
+   [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md) for configuration; OAuth is still in Testing mode.
+2. Resolve durable shared quota storage across host replacements and add edge
+   connection/request limits. Verify subprocess termination and load on the Linux
+   host; local offline tests do not establish hosted behavior.
 3. Build a reproducible deployment (locked dependencies, container, health check,
    HTTPS, secrets, non-root execution, restricted outbound networking).
 4. Review SDK logging and credential handling end to end. Add privacy/retention

@@ -1,10 +1,13 @@
 """Session-only BYOK boundary, separate from the local history application.
 
-This is a pre-deployment foundation. The in-process capacity gate is not a
-distributed rate limiter and must not be advertised as one.
+Single-host admission storage and a subprocess deadline protect execution.
+Host disk replacement still resets usage counters; see docs/PUBLIC_SERVICE.md.
 """
 from contextlib import contextmanager
 from threading import BoundedSemaphore
+from pathlib import Path
+from research_agent.public_limits import admit_run, AdmissionError
+from research_agent.public_execution import execute_question, ResearchTimeoutError
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +18,7 @@ from research_agent.ui_service import run_question
 
 class PublicConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix='PUBLIC_', env_file=None, extra='ignore')
+    usage_db: Path = Path(__file__).resolve().parents[2] / '.local/public-usage.sqlite3'
     enabled: bool = False
     auth_preview: bool = False
     gemini_model: str = Field(default='', max_length=150)
@@ -72,11 +76,12 @@ def visitor_settings(gemini_key: str, tavily_key: str, model: str) -> VisitorSet
     )
 
 
-def run_visitor_question(question, on_progress, *, gemini_key, tavily_key, model):
+def run_visitor_question(question, on_progress, *, gemini_key, tavily_key, model, identity=None):
     if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
         raise PublicInputError('Enter a question between 1 and 2,000 characters.')
     settings = visitor_settings(gemini_key, tavily_key, model)
-    with research_slot():
+    with research_slot(), admit_run(PublicConfig().usage_db, identity):
+        on_progress("Researching (up to three minutes)")
         # Already fixed to Quick limits. Avoid converting back to environment-
         # reading Settings in apply_depth; preserve the explicit-only settings.
-        return run_question(question.strip(), on_progress, settings=settings)
+        return execute_question(question.strip(), settings)

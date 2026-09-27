@@ -171,6 +171,7 @@ def _build_llm(
         api_key=_secret_value(
             settings.llm_api_key
         ),
+        **({'bounded_requests': True} if settings.app_env == 'public' else {}),
     )
 
 
@@ -256,7 +257,8 @@ def _build_search_client(
     return TavilySearchClient(
         api_key=_secret_value(
             settings.tavily_api_key
-        )
+        ),
+        **({'bounded_requests': True} if settings.app_env == 'public' else {}),
     )
 
 

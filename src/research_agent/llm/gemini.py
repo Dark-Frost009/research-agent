@@ -42,6 +42,7 @@ class GeminiLLMClient:
         model: str,
         api_key: str | None = None,
         client: Any | None = None,
+        bounded_requests: bool = False,
     ) -> None:
         clean_model = model.strip()
 
@@ -64,6 +65,9 @@ class GeminiLLMClient:
         try:
             self._client = genai.Client(
                 api_key=api_key.strip(),
+                **({'vertexai': False, 'http_options': types.HttpOptions(
+                    timeout=30_000, retry_options=types.HttpRetryOptions(attempts=1),
+                )} if bounded_requests else {}),
             )
         except ValueError as exc:
             raise LLMConfigurationError(
