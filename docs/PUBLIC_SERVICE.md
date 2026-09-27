@@ -66,3 +66,7 @@ without API-key inputs, research execution or report access. `PUBLIC_DEMO_ONLY`
 can remain true for rollback: set `PUBLIC_AUTH_PREVIEW=false` to return to the demo.
 `requirements.txt` installs the public authentication extra on Cloud. Dependency
 versions still need a reviewed reproducible lock before the live-service launch.
+
+In Streamlit Cloud Secrets, use quoted root-level flags (`PUBLIC_AUTH_PREVIEW = "true"`,
+`PUBLIC_ENABLED = "false"`). Streamlit promotes strings to environment variables,
+not TOML booleans. The nested `auth.expose_tokens` remains a TOML boolean.
