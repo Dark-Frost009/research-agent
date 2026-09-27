@@ -24,6 +24,7 @@ dependencies = [
 research-agent = "research_agent.main:main"
 
 [project.optional-dependencies]
+public = ["streamlit[auth]>=1.64,<2"]
 dev = [
     "pytest>=8.3",
 ]

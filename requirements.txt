@@ -1,0 +1,2 @@
+# Streamlit Community Cloud installs this file. Include Google sign-in support.
+.[public]

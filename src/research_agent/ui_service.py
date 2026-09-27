@@ -102,11 +102,12 @@ def preview_depth(name: DepthName) -> ResearchDepth:
     return apply_depth(Settings(_env_file=root / ".env"), name)[1]
 
 
-def run_question(question: str, on_progress: Callable[[str], None], *, depth: DepthName | None = None) -> CompletedResearch:
+def run_question(question: str, on_progress: Callable[[str], None], *, depth: DepthName | None = None, settings: Settings | None = None) -> CompletedResearch:
     initial = build_initial_state(question)
     # Never cache an application/context: providers and workspace are per request.
     root = Path(__file__).resolve().parents[2]
-    settings = Settings(_env_file=root / ".env")
+    if settings is None:
+        settings = Settings(_env_file=root / ".env")
     selected_depth = None
     if depth is not None:
         settings, selected_depth = apply_depth(settings, depth)

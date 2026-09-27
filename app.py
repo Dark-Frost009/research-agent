@@ -9,6 +9,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import streamlit as st
 
+# Cloud authentication staging runs before importing local history or widgets.
+# PublicConfig reads environment only; it never loads the local .env file.
+from research_agent.public_service import PublicConfig
+try:
+    _public_config = PublicConfig()
+except Exception:
+    st.error("The public service configuration is invalid. Contact the operator.")
+    st.stop()
+if _public_config.enabled or _public_config.auth_preview:
+    import runpy
+    runpy.run_path(str(Path(__file__).resolve().parent / "public_app.py"), run_name="__main__")
+    st.stop()
+
+
 from research_agent.backup_ui import render_backup_controls
 from research_agent.config import Settings
 from research_agent.depth import DEPTH_NAMES
