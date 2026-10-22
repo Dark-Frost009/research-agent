@@ -216,3 +216,62 @@ def test_ui_passes_verified_identity_and_shows_timeout(monkeypatch):
     assert not app.exception
     assert 'three-minute' in app.warning[0].value
     assert not app.get('download_button')
+
+
+# ---------------------------------------------------------------------------
+# The worker reads one bounded request from stdin. JSON escaping can make a
+# legitimate request much longer than its field limits, so the cap must be sized
+# from the worst case, and oversize input must be rejected, never truncated.
+# ---------------------------------------------------------------------------
+
+def _worst_case_request():
+    # Control characters are the worst case: JSON escapes each to six characters.
+    # They are not whitespace, so visitor_settings() accepts them in keys.
+    return dict(question='\x01' * 2000, gemini_key='\x01' * 512,
+                tavily_key='\x01' * 512, model='\x01' * 150)
+
+
+def _run_real_worker(request):
+    # Stub only the research call inside a real worker process; no provider is contacted.
+    script = (
+        "import json\n"
+        "from types import SimpleNamespace\n"
+        "import research_agent.ui_service as service\n"
+        "def fake(question, progress, *, settings):\n"
+        "    return SimpleNamespace(json_export=lambda: json.dumps({'received': len(question)}),\n"
+        "                           warning_count=0)\n"
+        "service.run_question = fake\n"
+        "from research_agent.public_worker import main\nmain()\n"
+    )
+    env = {**os.environ, 'PYTHONPATH': str(Path(public.__file__).resolve().parents[1])}
+    response = subprocess.run([sys.executable, '-c', script],
+                              input=json.dumps(request, ensure_ascii=False),
+                              capture_output=True, text=True, encoding='utf-8',
+                              timeout=20, env=env)
+    assert response.returncode == 0
+    return json.loads(response.stdout)
+
+
+def test_worst_case_legitimate_request_fits_far_below_the_worker_cap():
+    from research_agent.public_worker import MAX_REQUEST_CHARS
+    payload = json.dumps(_worst_case_request(), ensure_ascii=False)
+    assert len(payload) > 8192  # the previous fixed read would have truncated this
+    assert len(payload) < MAX_REQUEST_CHARS // 2
+
+
+def test_real_worker_accepts_a_worst_case_legitimate_request():
+    request = _worst_case_request()
+    request['model'] = 'test-model'  # the escaped-size case is the question and keys
+    request['gemini_key'] = 'g' * 512
+    request['tavily_key'] = 't' * 512
+    response = _run_real_worker(request)
+    assert response['kind'] == 'completed'
+    assert response['value'] == {'received': 2000}
+
+
+def test_real_worker_rejects_oversized_requests_instead_of_truncating_them():
+    from research_agent.public_worker import MAX_REQUEST_CHARS
+    # Valid JSON that would run normally if the size cap were not enforced.
+    request = dict(question='a' * (MAX_REQUEST_CHARS + 1000), gemini_key='g',
+                   tavily_key='t', model='test-model')
+    assert _run_real_worker(request) == {'kind': 'error'}

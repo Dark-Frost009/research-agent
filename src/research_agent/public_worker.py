@@ -3,6 +3,13 @@ import os
 import sys
 import threading
 
+# Largest legitimate request. The parent allows a 2,000-character question, two
+# 512-character keys and a 150-character model. In the worst case every one of
+# those characters is a control character, which JSON escapes to six characters
+# (about 19,000 in all). The cap is deliberately generous but bounded: oversized
+# input is rejected, never truncated into a request that parses differently.
+MAX_REQUEST_CHARS = 65_536
+
 
 def main():
     # Start before importing providers. Also stops an orphan after a host crash.
@@ -19,7 +26,10 @@ def main():
         from research_agent.ui_service import run_question
         from research_agent.incomplete import ResearchInterrupted
         try:
-            request = json.loads(sys.stdin.read(8192))
+            raw = sys.stdin.read(MAX_REQUEST_CHARS + 1)
+            if len(raw) > MAX_REQUEST_CHARS:
+                raise ValueError('Research request is too large.')
+            request = json.loads(raw)
             settings = visitor_settings(request['gemini_key'], request['tavily_key'], request['model'])
             result = run_question(request['question'], lambda _: None, settings=settings)
             response = dict(kind='completed', value=json.loads(result.json_export()),
