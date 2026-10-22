@@ -1,0 +1,281 @@
+{
+  "report": {
+    "question": "How does the CUBIC congestion control algorithm in TCP differ from Reno?",
+    "content": "The main difference between TCP Reno and TCP Cubic is the window increase function. While Reno uses the traditional linear increase (W=W+1), Cubic implements a binary search increase which can reach the available bandwidth much faster than Reno. Unlike Reno, the window size does not increase as a linear function of the time since the last congestion event! Instead, the window size is a cubic function of the time since the last congestion event.",
+    "citations": [
+      {
+        "id": "cit_e633461295eb4531b00f1144cc940890",
+        "claim_text": "The main difference between TCP Reno and TCP Cubic is the window increase function.",
+        "evidence_ids": [
+          "ev_ecae4580d20548cfa13e743a0da5fa87"
+        ]
+      },
+      {
+        "id": "cit_12d63316348548b3b3c4be7897e04b7a",
+        "claim_text": "While Reno uses the traditional linear increase (W=W+1), Cubic implements a binary search increase which can reach the available bandwidth much faster than Reno.",
+        "evidence_ids": [
+          "ev_ecae4580d20548cfa13e743a0da5fa87"
+        ]
+      },
+      {
+        "id": "cit_6f89ea7c452d4404b0743b056080da47",
+        "claim_text": "Unlike Reno, the window size does not increase as a linear function of the time since the last congestion event!",
+        "evidence_ids": [
+          "ev_ce81628272d043d294d368ae8ae162a1"
+        ]
+      },
+      {
+        "id": "cit_6b18b64508fb48e39b9cc6e8e5a632b0",
+        "claim_text": "Instead, the window size is a cubic function of the time since the last congestion event.",
+        "evidence_ids": [
+          "ev_ce81628272d043d294d368ae8ae162a1"
+        ]
+      }
+    ],
+    "created_at": "2026-10-22T10:54:07.217268Z"
+  },
+  "evidence": [
+    {
+      "id": "ev_ecae4580d20548cfa13e743a0da5fa87",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_23327dc0fd8642b6a3eb37ae804e9b8b",
+      "excerpt": "[excerpt sha1:5d440c9df6]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_ce81628272d043d294d368ae8ae162a1",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_23327dc0fd8642b6a3eb37ae804e9b8b",
+      "excerpt": "[excerpt sha1:7f98c1ead0]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_b24d2b052ec2435c9934791d4e04a3f7",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:5d440c9df6]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_b08ec9a2591942988cec46c21c35b641",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:7f98c1ead0]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_3e31fc3b1fff4502a41487d1b74ab3bb",
+      "source_id": "src_ec90a25ff96b51fc4a8ef52f",
+      "sub_question_id": "sq_23327dc0fd8642b6a3eb37ae804e9b8b",
+      "excerpt": "[excerpt sha1:782ca3c117]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_63437b11773745b9a8c5365b9cd9fa0c",
+      "source_id": "src_ecc3b4c166634533787fa46c",
+      "sub_question_id": "sq_23327dc0fd8642b6a3eb37ae804e9b8b",
+      "excerpt": "[excerpt sha1:10a65b3e0a]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_56887b84b14f41bd9dc7d6092272ac7b",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:2562f2d7c1]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_e1a0afdae0b44dd9b421714efac6cbfe",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:74ab75557f]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_82229fb3749b4991921965841aee5bf6",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:78ae65a9d3]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_cf8466d62563446199a6cfaf5a1dc129",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:207809b8e4]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_f1e2fe710f5b47a5b5bb7115e6d7517d",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_4a32275b219a49de963ff6375a7474c8",
+      "excerpt": "[excerpt sha1:06728a273c]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_36d234c787a344bfb423231b78c5c161",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_73dbee16eb2f4cea85b575e6e15ba252",
+      "excerpt": "[excerpt sha1:af9f86ca3a]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_1d9fc64d80994cc5955f02d38786a4df",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_73dbee16eb2f4cea85b575e6e15ba252",
+      "excerpt": "[excerpt sha1:6213b7a524]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_3b6cb7cc9c8f4a509c3a19acdf6f0a4f",
+      "source_id": "src_553601919dc02eb82aa48deb",
+      "sub_question_id": "sq_73dbee16eb2f4cea85b575e6e15ba252",
+      "excerpt": "[excerpt sha1:b6e0223526]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_bb5cf82908bb47eaac851d13d8be8701",
+      "source_id": "src_553601919dc02eb82aa48deb",
+      "sub_question_id": "sq_73dbee16eb2f4cea85b575e6e15ba252",
+      "excerpt": "[excerpt sha1:405c71b78e]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_d27170c82d274c68980c2ac3705d03f1",
+      "source_id": "src_908a302e9b3697521f63c7e7",
+      "sub_question_id": "sq_73dbee16eb2f4cea85b575e6e15ba252",
+      "excerpt": "[excerpt sha1:36d6836d86]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_e1904e990a2e4074978178a078c17ea9",
+      "source_id": "src_908a302e9b3697521f63c7e7",
+      "sub_question_id": "sq_73dbee16eb2f4cea85b575e6e15ba252",
+      "excerpt": "[excerpt sha1:d1817e7610]",
+      "relevance_note": null
+    }
+  ],
+  "sources": [
+    {
+      "id": "src_47f23663ab7cbfe279e470f1",
+      "url": "https://www.cellstream.com/2026/04/18/what-is-tcp-cubic-and-why-so-popular",
+      "final_url": "https://www.cellstream.com/2026/04/18/what-is-tcp-cubic-and-why-so-popular/",
+      "title": "TCP CUBIC Explained: Congestion Control | CellStream",
+      "domain": "www.cellstream.com",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T10:53:32.336047Z"
+    },
+    {
+      "id": "src_553601919dc02eb82aa48deb",
+      "url": "https://www.hjp.at/doc/rfc/rfc9438.html",
+      "final_url": "https://www.hjp.at/doc/rfc/rfc9438.html",
+      "title": "hjp: doc: RFC 9438: CUBIC for Fast and Long-Distance Networks",
+      "domain": "www.hjp.at",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T10:53:41.469130Z"
+    },
+    {
+      "id": "src_63c7962b2e809100ca2415c0",
+      "url": "https://bingweb.binghamton.edu/~ychen/CUBIC_ICNC2013_CameraReady.pdf",
+      "final_url": null,
+      "title": "Analysis of TCP CUBIC Using a Deterministic Loss Model",
+      "domain": "bingweb.binghamton.edu",
+      "content_type": null,
+      "fetch_status": "failed",
+      "fetched_at": "2026-10-22T10:53:28.287621Z"
+    },
+    {
+      "id": "src_908a302e9b3697521f63c7e7",
+      "url": "https://oneuptime.com/blog/post/2026-03-20-tcp-congestion-control-algorithms/view",
+      "final_url": "https://oneuptime.com/blog/post/2026-03-20-tcp-congestion-control-algorithms/view",
+      "title": "How to Understand TCP Congestion Control Algorithms (Reno, CUBIC, BBR)",
+      "domain": "oneuptime.com",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T10:53:43.820129Z"
+    },
+    {
+      "id": "src_adee264b78842ef6ba9bd029",
+      "url": "https://witestlab.poly.edu/blog/tcp-congestion-control-basics",
+      "final_url": "https://witestlab.poly.edu/blog/tcp-congestion-control-basics/",
+      "title": "TCP congestion control",
+      "domain": "witestlab.poly.edu",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T10:53:22.384437Z"
+    },
+    {
+      "id": "src_c956f10fa4e148b4cd5eeee6",
+      "url": "https://www.naun.org/main/UPress/cc/cc-27.pdf",
+      "final_url": null,
+      "title": "[PDF] Performance Analysis of TCP Congestion Control Algorithms - NAUN",
+      "domain": "www.naun.org",
+      "content_type": null,
+      "fetch_status": "failed",
+      "fetched_at": "2026-10-22T10:53:36.412697Z"
+    },
+    {
+      "id": "src_ec90a25ff96b51fc4a8ef52f",
+      "url": "https://dipsingh.github.io/TCP-Congestion-Experiment",
+      "final_url": "https://dipsingh.github.io/TCP-Congestion-Experiment/",
+      "title": "Experimenting with TCP Congestion control – Dip Singh – Network Engineer",
+      "domain": "dipsingh.github.io",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T10:53:24.465173Z"
+    },
+    {
+      "id": "src_ecc3b4c166634533787fa46c",
+      "url": "https://www.geeksforgeeks.org/computer-networks/tcp-congestion-control-algorithms-reno-new-reno-bic-cubic",
+      "final_url": "https://www.geeksforgeeks.org/computer-networks/tcp-congestion-control-algorithms-reno-new-reno-bic-cubic/",
+      "title": "TCP Congestion Control Algorithms: Reno, New Reno, BIC, CUBIC - GeeksforGeeks",
+      "domain": "www.geeksforgeeks.org",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T10:53:26.439087Z"
+    }
+  ],
+  "iterations": 1,
+  "searches": 3,
+  "issues": [
+    "Some proposed quotations did not match the source text exactly and were rejected."
+  ],
+  "depth": {
+    "name": "Standard",
+    "rounds": 2,
+    "searches": 5,
+    "sources": 8,
+    "fetches": 8,
+    "ai_calls": 32,
+    "sub_questions": 3,
+    "searches_per_round": 3,
+    "results_per_search": 4,
+    "finalization_reserve": 2
+  },
+  "summary": {
+    "rounds": {
+      "used": 1,
+      "limit": 2
+    },
+    "searches": {
+      "used": 3,
+      "limit": 5
+    },
+    "sources": {
+      "used": 8,
+      "limit": 8
+    },
+    "page_reads": {
+      "used": 8,
+      "limit": 8
+    },
+    "ai_calls": {
+      "used": 12,
+      "limit": 32
+    },
+    "end_reason": "sufficient",
+    "outcome": "verified"
+  }
+}

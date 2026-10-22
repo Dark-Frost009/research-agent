@@ -1,0 +1,244 @@
+{
+  "report": {
+    "question": "How does the CUBIC congestion control algorithm in TCP differ from Reno?",
+    "content": "The main difference between TCP Reno and TCP Cubic is the window increase function. While Reno uses the traditional linear increase (W=W+1), Cubic implements a binary search increase which can reach the available bandwidth much faster than Reno. Earlier TCP congestion control algorithms such as Reno and New Reno rely on linear growth of the congestion window (cwnd). Instead, the window size is a cubic function of the time since the last congestion event.",
+    "citations": [
+      {
+        "id": "cit_0ef49d6afa4e4a2ba82a5cfbf9b781df",
+        "claim_text": "The main difference between TCP Reno and TCP Cubic is the window increase function.",
+        "evidence_ids": [
+          "ev_a9f3dcb5ae5549ecac01a54863df1ec0"
+        ]
+      },
+      {
+        "id": "cit_b7fb4ed794964e2ea4fe02e09698928b",
+        "claim_text": "While Reno uses the traditional linear increase (W=W+1), Cubic implements a binary search increase which can reach the available bandwidth much faster than Reno.",
+        "evidence_ids": [
+          "ev_a9f3dcb5ae5549ecac01a54863df1ec0"
+        ]
+      },
+      {
+        "id": "cit_34da5e675ef9478ca436b6c180b913c7",
+        "claim_text": "Earlier TCP congestion control algorithms such as Reno and New Reno rely on linear growth of the congestion window (cwnd).",
+        "evidence_ids": [
+          "ev_d982ed12d711451d86f8fd48c5921e51"
+        ]
+      },
+      {
+        "id": "cit_a88e24d8ddc640f586d0e3407e16cc60",
+        "claim_text": "Instead, the window size is a cubic function of the time since the last congestion event.",
+        "evidence_ids": [
+          "ev_71c47a9746a340f3b1a6dcc1eb04c053"
+        ]
+      }
+    ],
+    "created_at": "2026-10-22T11:17:13.776537Z"
+  },
+  "evidence": [
+    {
+      "id": "ev_d982ed12d711451d86f8fd48c5921e51",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_e53e423fa3024e75934a4790249ceb54",
+      "excerpt": "[excerpt sha1:2562f2d7c1]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_b788a932a7904a6f80c1765e08791a83",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_e53e423fa3024e75934a4790249ceb54",
+      "excerpt": "[excerpt sha1:0ca5a75122]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_7b31c3cca307487d9a190c3fbe4dbe98",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_7f452bfcc23747dc8da753780ab153cd",
+      "excerpt": "[excerpt sha1:af9f86ca3a]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_08529ede3aba4bf1bc2d4d080b9744a3",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_7f452bfcc23747dc8da753780ab153cd",
+      "excerpt": "[excerpt sha1:34f3238bee]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_4751fd917a7e4567bd1719541e5b5529",
+      "source_id": "src_47f23663ab7cbfe279e470f1",
+      "sub_question_id": "sq_7f452bfcc23747dc8da753780ab153cd",
+      "excerpt": "[excerpt sha1:7e1f28abff]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_24a0eda5f0ba405fbd09d25a02420f6a",
+      "source_id": "src_fdae288dbb9251bde073f88a",
+      "sub_question_id": "sq_e53e423fa3024e75934a4790249ceb54",
+      "excerpt": "[excerpt sha1:354f6c9df5]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_a361c3139d044e358f03ad695979e1fb",
+      "source_id": "src_fdae288dbb9251bde073f88a",
+      "sub_question_id": "sq_e53e423fa3024e75934a4790249ceb54",
+      "excerpt": "[excerpt sha1:74ed80c7a6]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_a9f3dcb5ae5549ecac01a54863df1ec0",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_b04c0d2703534eee8b84a6e4c1b160f5",
+      "excerpt": "[excerpt sha1:5d440c9df6]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_71c47a9746a340f3b1a6dcc1eb04c053",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_b04c0d2703534eee8b84a6e4c1b160f5",
+      "excerpt": "[excerpt sha1:7f98c1ead0]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_4c6ddac9cf2a490d86e6f1ec67e1a605",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_7f452bfcc23747dc8da753780ab153cd",
+      "excerpt": "[excerpt sha1:5d440c9df6]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_7b820039cbb94ea58c1bfbfb9aaf3e5d",
+      "source_id": "src_adee264b78842ef6ba9bd029",
+      "sub_question_id": "sq_7f452bfcc23747dc8da753780ab153cd",
+      "excerpt": "[excerpt sha1:7f98c1ead0]",
+      "relevance_note": null
+    },
+    {
+      "id": "ev_78cd9c0ae7f44362bd335dceb2ceb201",
+      "source_id": "src_9672f6de3ef1b5a6ea2e2554",
+      "sub_question_id": "sq_b04c0d2703534eee8b84a6e4c1b160f5",
+      "excerpt": "[excerpt sha1:42029086f2]",
+      "relevance_note": null
+    }
+  ],
+  "sources": [
+    {
+      "id": "src_47f23663ab7cbfe279e470f1",
+      "url": "https://www.cellstream.com/2026/04/18/what-is-tcp-cubic-and-why-so-popular",
+      "final_url": "https://www.cellstream.com/2026/04/18/what-is-tcp-cubic-and-why-so-popular/",
+      "title": "TCP CUBIC Explained: Congestion Control | CellStream",
+      "domain": "www.cellstream.com",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T11:16:36.924692Z"
+    },
+    {
+      "id": "src_63c7962b2e809100ca2415c0",
+      "url": "https://bingweb.binghamton.edu/~ychen/CUBIC_ICNC2013_CameraReady.pdf",
+      "final_url": null,
+      "title": "Analysis of TCP CUBIC Using a Deterministic Loss Model",
+      "domain": "bingweb.binghamton.edu",
+      "content_type": null,
+      "fetch_status": "failed",
+      "fetched_at": "2026-10-22T11:16:51.082179Z"
+    },
+    {
+      "id": "src_8361cbcc0c0b922e52774994",
+      "url": "https://quizlet.com/study-guides/tcp-congestion-control-algorithms-reno-cubic-and-bbr-analysi-ec70a3fa-6d97-468d-8cb1-96de34b6be1d",
+      "final_url": null,
+      "title": "TCP Congestion Control Algorithms: Reno, CUBIC, and BBR Analysis Study Guide | Quizlet",
+      "domain": "quizlet.com",
+      "content_type": null,
+      "fetch_status": "failed",
+      "fetched_at": "2026-10-22T11:16:38.181419Z"
+    },
+    {
+      "id": "src_9672f6de3ef1b5a6ea2e2554",
+      "url": "https://en.wikipedia.org/wiki/TCP_congestion_control",
+      "final_url": "https://en.wikipedia.org/wiki/TCP_congestion_control",
+      "title": "TCP congestion control - Wikipedia",
+      "domain": "en.wikipedia.org",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T11:16:47.134987Z"
+    },
+    {
+      "id": "src_adee264b78842ef6ba9bd029",
+      "url": "https://witestlab.poly.edu/blog/tcp-congestion-control-basics",
+      "final_url": "https://witestlab.poly.edu/blog/tcp-congestion-control-basics/",
+      "title": "TCP congestion control",
+      "domain": "witestlab.poly.edu",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T11:16:45.164706Z"
+    },
+    {
+      "id": "src_c956f10fa4e148b4cd5eeee6",
+      "url": "https://www.naun.org/main/UPress/cc/cc-27.pdf",
+      "final_url": null,
+      "title": "[PDF] Performance Analysis of TCP Congestion Control Algorithms - NAUN",
+      "domain": "www.naun.org",
+      "content_type": null,
+      "fetch_status": "failed",
+      "fetched_at": "2026-10-22T11:16:48.942991Z"
+    },
+    {
+      "id": "src_cd534805bdfce62212310171",
+      "url": "https://file.scirp.org/Html/6-6101300_31172.htm",
+      "final_url": "https://file.scirp.org/Html/6-6101300_31172.htm",
+      "title": "Comparative Analysis of TCP-Protocol Operation Algorithms in Self-Similar Traffic",
+      "domain": "file.scirp.org",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T11:16:40.522578Z"
+    },
+    {
+      "id": "src_fdae288dbb9251bde073f88a",
+      "url": "https://tcpcc.systemsapproach.org/algorithm.html",
+      "final_url": "https://tcpcc.systemsapproach.org/algorithm.html",
+      "title": "Chapter 4: Control-Based Algorithms — TCP Congestion Control: A Systems Approach Version 1.1-dev documentation",
+      "domain": "tcpcc.systemsapproach.org",
+      "content_type": "text/html",
+      "fetch_status": "success",
+      "fetched_at": "2026-10-22T11:16:42.223750Z"
+    }
+  ],
+  "iterations": 1,
+  "searches": 3,
+  "issues": [],
+  "depth": {
+    "name": "Standard",
+    "rounds": 2,
+    "searches": 5,
+    "sources": 8,
+    "fetches": 8,
+    "ai_calls": 32,
+    "sub_questions": 3,
+    "searches_per_round": 3,
+    "results_per_search": 4,
+    "finalization_reserve": 2
+  },
+  "summary": {
+    "rounds": {
+      "used": 1,
+      "limit": 2
+    },
+    "searches": {
+      "used": 3,
+      "limit": 5
+    },
+    "sources": {
+      "used": 8,
+      "limit": 8
+    },
+    "page_reads": {
+      "used": 8,
+      "limit": 8
+    },
+    "ai_calls": {
+      "used": 11,
+      "limit": 32
+    },
+    "end_reason": "sufficient",
+    "outcome": "verified"
+  }
+}
