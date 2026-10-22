@@ -22,7 +22,6 @@ def clear_private_session():
 
 st.set_page_config(page_title='Research Agent', page_icon='🔎')
 st.title('Research Agent')
-st.write('Research a question using your own Gemini and Tavily API keys.')
 try:
     config = PublicConfig()
 except Exception:
@@ -30,8 +29,14 @@ except Exception:
     st.stop()
 
 if not config.enabled and not config.auth_preview:
-    st.info('The public research service is not enabled yet.')
+    # Fail closed to the fictional portfolio demo: no sign-in, keys, providers
+    # or history. A missing or mistyped flag must never expose anything more.
+    st.info('Public portfolio demo · Live Gemini/Tavily research and saved '
+            'research history are disabled on this deployment.')
+    from research_agent.demo import render_demo
+    render_demo(public_mode=True)
     st.stop()
+st.write('Research a question using your own Gemini and Tavily API keys.')
 
 if st.user.get('is_logged_in') is not True:
     clear_private_session()

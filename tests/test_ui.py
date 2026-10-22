@@ -177,3 +177,63 @@ def isolated_ui_history(tmp_path, monkeypatch):
     import research_agent.history as history_module
     store = history_module.HistoryStore(tmp_path / "ui-history.sqlite")
     monkeypatch.setattr(history_module, "get_history_store", lambda: store)
+
+
+# ---------------------------------------------------------------------------
+# Untrusted text must be shown as plain text, never as markdown.
+#
+# Source titles come from search results and web pages; claim text is written
+# by the model from untrusted evidence. Streamlit renders markdown images and
+# links, so rendering them would let a web page make the viewer's browser
+# contact an arbitrary host or show a link styled as a trusted citation.
+# ---------------------------------------------------------------------------
+
+HOSTILE_IMAGE_HOST = "attacker.example/pixel.png"
+HOSTILE_LINK_HOST = "attacker.example/login"
+
+
+def hostile_completed():
+    return service.CompletedResearch(
+        report=ResearchReport(question="Question", content="Supported answer.", citations=[
+            Citation(id="c1", claim_text=f"A claim ![beacon](https://{HOSTILE_IMAGE_HOST})",
+                     evidence_ids=["e1"])]),
+        evidence=[Evidence(id="e1", source_id="s1", excerpt="Supporting source excerpt.")],
+        sources=[Source(id="s1", url="https://example.com/original", domain="example.com",
+                        final_url="https://example.com/final",
+                        title=f"Title [Verify your account](https://{HOSTILE_LINK_HOST})")],
+        iterations=1, searches=2, warning_count=0,
+    )
+
+
+def assert_only_plain_text(app, fragment):
+    assert not [item.value for item in app.markdown if fragment in item.value]
+    assert [item.value for item in app.text if fragment in item.value]
+
+
+def test_untrusted_titles_and_claims_in_completed_reports_are_plain_text(monkeypatch):
+    monkeypatch.setattr(service, "run_question", lambda *args, **kwargs: hostile_completed())
+    app = AppTest.from_file(APP).run()
+    app.text_area[0].set_value("Question")
+    app.button[0].click().run()
+    assert not app.exception
+    assert_only_plain_text(app, HOSTILE_IMAGE_HOST)
+    assert_only_plain_text(app, HOSTILE_LINK_HOST)
+
+
+def test_untrusted_titles_in_incomplete_runs_are_plain_text(monkeypatch):
+    from research_agent.incomplete import IncompleteResearch, ResearchInterrupted
+    result = hostile_completed()
+    interrupted = IncompleteResearch(
+        question="Question", reason="quota", last_stage="Searching the web",
+        sources=result.sources, evidence=result.evidence, iterations=1, searches=2,
+        warning_count=0,
+    )
+    def fail(question, progress, *, depth=None):
+        raise ResearchInterrupted(interrupted)
+    monkeypatch.setattr(service, "run_question", fail)
+    app = AppTest.from_file(APP).run()
+    app.text_area[0].set_value("Question")
+    app.button[0].click().run()
+    assert not app.exception
+    assert any(item.value == "Incomplete research" for item in app.subheader)
+    assert_only_plain_text(app, HOSTILE_LINK_HOST)

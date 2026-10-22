@@ -973,8 +973,10 @@ def render_incomplete_research(partial, history) -> None:
 
     for source_index, source in enumerate(partial.sources, start=1):
         with st.container(border=True):
-            st.markdown(
-                f"**{source_index}. {source.title or source.domain}**"
+            # Source titles come from search results and web pages, so they
+            # are untrusted. Plain text never renders markdown images/links.
+            st.text(
+                f"{source_index}. {source.title or source.domain}"
             )
             st.caption("Fetch status: " + source.fetch_status)
 
@@ -1057,14 +1059,15 @@ def render_citations(result) -> None:
     ):
         with st.container(border=True):
             st.markdown(f"**Claim {index}**")
-            st.write(citation.claim_text)
+            # claim_text is model-written from untrusted evidence: plain text.
+            st.text(citation.claim_text)
 
             sources = result.citation_sources(citation)
             if sources:
                 st.caption("Sources")
 
             for source in sources:
-                st.write(source.title or source.domain)
+                st.text(source.title or source.domain)
                 url = safe_source_url(source)
                 if url:
                     st.link_button("Open source", url)
@@ -1106,8 +1109,8 @@ def render_all_sources(result) -> None:
 
     with st.expander("All researched sources", expanded=False):
         for source in result.sources:
-            st.write(
-                f"**{source.title or source.domain}** — "
+            st.text(
+                f"{source.title or source.domain} — "
                 f"{labels[source.fetch_status]}"
             )
             url = safe_source_url(source)

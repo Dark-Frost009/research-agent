@@ -94,6 +94,28 @@ def test_disabled_service_does_not_render_credentials(monkeypatch):
     assert not app.text_area
 
 
+@pytest.mark.parametrize('enabled', ['false', None])
+def test_hosted_entry_fails_closed_to_the_demo_when_flags_are_off_or_missing(monkeypatch, enabled):
+    # A missing flag (for example a TOML boolean that Streamlit never promoted
+    # to an environment variable) must land on the fictional demo only.
+    import research_agent.history as history
+    monkeypatch.setattr(history, 'get_history_store', lambda: pytest.fail('History accessed'))
+    monkeypatch.setattr(public, 'run_visitor_question', lambda *a, **k: pytest.fail('Research started'))
+    monkeypatch.delenv('PUBLIC_AUTH_PREVIEW', raising=False)
+    if enabled is None:
+        monkeypatch.delenv('PUBLIC_ENABLED', raising=False)
+    else:
+        monkeypatch.setenv('PUBLIC_ENABLED', enabled)
+    app = AppTest.from_file(APP).run()
+    assert not app.exception
+    assert any(item.value == 'Sample research question' for item in app.subheader)
+    assert not app.text_input
+    assert not app.text_area
+    assert not app.checkbox
+    assert not [b for b in app.button if b.label in {'Sign in with Google', 'Start research'}]
+    assert not app.get('toggle')
+
+
 def test_login_is_required_before_keys_or_results(public_env, monkeypatch):
     monkeypatch.setattr(st, 'user', {'is_logged_in': False})
     app = AppTest.from_file(APP).run()
