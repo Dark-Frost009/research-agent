@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "questions": [
+    {
+      "id": "cubic_vs_reno",
+      "category": "comparison, known trap",
+      "question": "How does the CUBIC congestion control algorithm in TCP differ from Reno?",
+      "expectations": {
+        "must_mention": [
+          ["cubic function", "cubic functions", "cubic curve", "cubic growth"],
+          ["linear", "linearly", "additive increase", "AIMD"],
+          ["last congestion event", "since the last loss", "since the last congestion"]
+        ],
+        "pitfalls": [
+          {
+            "name": "binary search attributed to CUBIC",
+            "pattern": "binary search",
+            "unless": "\\bBIC\\b"
+          }
+        ]
+      },
+      "notes": "Real runs repeatedly repeated one blog's claim that CUBIC uses a binary search increase. As far as we know that is BIC, CUBIC's predecessor; RFC 9438, Wikipedia and the Systems Approach book describe CUBIC as a cubic function of time since the last congestion event."
+    },
+    {
+      "id": "rag_basics",
+      "category": "definition, easy baseline",
+      "question": "What is retrieval-augmented generation and what problem does it solve?",
+      "expectations": {
+        "must_mention": [
+          ["retrieval", "retrieves", "retrieved"],
+          ["hallucination", "hallucinations", "outdated", "knowledge cutoff", "up-to-date", "external knowledge"]
+        ]
+      },
+      "notes": "A well-covered topic. A regression here means something basic broke."
+    },
+    {
+      "id": "rag_limitations",
+      "category": "breadth",
+      "question": "What are the main limitations of retrieval-augmented generation?",
+      "expectations": {
+        "must_mention": [
+          ["irrelevant", "retrieval quality", "poor retrieval", "retrieval errors", "relevant documents"],
+          ["latency", "cost", "computational"],
+          ["context window", "context length", "token limit"],
+          ["hallucination", "hallucinations"]
+        ]
+      },
+      "notes": "Tests breadth: several distinct limitations spread over different sources. Facts found out of 4 is a rough coverage signal, not a grade."
+    },
+    {
+      "id": "ethernet_mtu",
+      "category": "numeric fact",
+      "question": "What is the standard Ethernet MTU and why is it 1500 bytes?",
+      "expectations": {
+        "must_mention": [
+          ["1500", "1,500"]
+        ]
+      },
+      "notes": "One exact number must appear. The 'why' is partly historical and loosely sourced, so only the number is checked."
+    },
+    {
+      "id": "python_313",
+      "category": "multi-fact",
+      "question": "What are the main new features of Python 3.13?",
+      "expectations": {
+        "must_mention": [
+          ["free-threaded", "free-threading", "no-GIL", "GIL"],
+          ["JIT", "just-in-time"],
+          ["interactive interpreter", "REPL"]
+        ]
+      },
+      "notes": "Python 3.13's documented headline changes: an improved interactive interpreter, experimental free-threaded mode (PEP 703) and an experimental JIT (PEP 744)."
+    },
+    {
+      "id": "four_day_week",
+      "category": "mixed evidence",
+      "question": "Does a four-day work week improve productivity?",
+      "expectations": {
+        "must_mention": [
+          ["mixed", "varies", "vary", "varied", "some studies", "depends", "depending", "inconclusive", "limited evidence"]
+        ]
+      },
+      "notes": "Evidence is mixed and context dependent. A good answer says so. The keyword check is a weak signal; read these answers yourself."
+    },
+    {
+      "id": "quantum_tcp_standard",
+      "category": "unanswerable, should abstain",
+      "question": "What did the 2031 IEEE standard for quantum TCP specify?",
+      "expectations": {
+        "expect_abstain": true
+      },
+      "notes": "No such standard can exist yet. The system should abstain or clearly state that the evidence does not establish an answer."
+    },
+    {
+      "id": "linux_cubic_default",
+      "category": "precise fact",
+      "question": "Which Linux kernel version made CUBIC the default TCP congestion control algorithm?",
+      "expectations": {
+        "must_mention": [
+          ["2.6.19"]
+        ]
+      },
+      "notes": "Wikipedia states CUBIC became the default in Linux kernel 2.6.19, replacing BIC."
+    }
+  ]
+}
