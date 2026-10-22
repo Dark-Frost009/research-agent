@@ -3320,3 +3320,65 @@ def test_duplicate_citation_ids_are_rejected_before_objects_are_built():
                 ),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase A2: source labels reach the synthesis prompt
+# ---------------------------------------------------------------------------
+
+
+def test_source_labels_reach_the_synthesis_prompt_but_not_internal_ids():
+    evidence = [
+        _evidence(
+            id="ev_internal_secret",
+            source_id="src_internal_secret",
+            excerpt="Grounded source statement.",
+        )
+    ]
+
+    llm = FakeSynthesisLLM(
+        SynthesisResponse(
+            content="Grounded answer.",
+            claims=[],
+        )
+    )
+
+    call = prepare_finalization_call(
+        original_question="What happened?",
+        evidence=evidence,
+        usage=BudgetUsage(),
+        budget_policy=_budget_policy(),
+        source_labels={
+            "src_internal_secret": "www.hjp.at",
+        },
+    )
+
+    Synthesizer(llm=llm).synthesize(call)
+
+    prompt = llm.calls[0]["user_prompt"]
+
+    assert "[E1] (source: www.hjp.at)" in prompt
+    assert "src_internal_secret" not in prompt
+    assert "ev_internal_secret" not in prompt
+
+
+def test_finalization_call_without_labels_keeps_unlabelled_prompt():
+    call = _prepare_finalization(
+        original_question="What happened?",
+        evidence=[_evidence()],
+    )
+
+    assert dict(call.source_labels) == {}
+
+
+def test_finalization_call_rejects_non_mapping_source_labels():
+    with pytest.raises(TypeError, match="source_labels must be a mapping"):
+        FinalizationCall(
+            original_question="What happened?",
+            evidence=(_evidence(),),
+            authorization=_finalization_authorization(
+                requested=2,
+                authorized=2,
+            ),
+            source_labels=["not", "a", "mapping"],
+        )

@@ -56,8 +56,8 @@ insufficient-evidence response is returned.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from uuid import uuid4
 
 from pydantic import (
@@ -267,12 +267,26 @@ class FinalizationCall:
 
     authorization: BudgetAuthorization
 
+    # Optional Source ID -> hostname labels shown next to each excerpt.
+    # They are display-only and never change which evidence is valid.
+    source_labels: Mapping[str, str] = field(
+        default_factory=dict
+    )
+
     def __post_init__(
         self,
     ) -> None:
         _validate_question(
             self.original_question
         )
+
+        if not isinstance(
+            self.source_labels,
+            Mapping,
+        ):
+            raise TypeError(
+                "source_labels must be a mapping."
+            )
 
         if not isinstance(
             self.evidence,
@@ -437,6 +451,7 @@ def prepare_finalization_call(
     evidence: list[Evidence],
     usage: BudgetUsage,
     budget_policy: BudgetPolicy,
+    source_labels: Mapping[str, str] | None = None,
 ) -> FinalizationCall:
     """Authorize finalization without performing an LLM call.
 
@@ -493,6 +508,9 @@ def prepare_finalization_call(
             evidence
         ),
         authorization=authorization,
+        source_labels=dict(
+            source_labels or {}
+        ),
     )
 
 
@@ -621,7 +639,10 @@ class Synthesizer:
 
         evidence_catalog, _ = (
             build_evidence_catalog(
-                evidence
+                evidence,
+                source_labels=(
+                    call.source_labels
+                ),
             )
         )
 
