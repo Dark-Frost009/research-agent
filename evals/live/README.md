@@ -17,6 +17,35 @@ normal test suite.
   validated by offline tests (`tests/test_live_metrics.py`,
   `tests/test_live_questions.py`).
 
+## Running a batch
+
+The runner (`src/research_agent/live_runner.py`) sends the questions through the
+same function the app uses, scores each finished run, and saves one JSON file per
+run under `.local/live-evals/<label>/` (git ignores `.local/`). Always preview
+first; the preview makes no AI or search request:
+
+```
+python -m research_agent.live_runner --label baseline-d5612ba --dry-run
+python -m research_agent.live_runner --label baseline-d5612ba --max-runs 8
+```
+
+- `--label` names the batch. Use one label per code version, for example the
+  commit being measured. Each file also records the commit and whether the
+  working tree had uncommitted edits (`+dirty`), so a mislabelled baseline shows.
+- `--max-runs` (default 8) is the most runs one command may start. `--runs N`
+  asks for N repeats per question; run 1 of every question happens before any
+  run 2.
+- Running the same command again resumes: runs that already have a result file
+  are skipped. This is how a batch is spread over several days of free-tier
+  quota.
+- If the provider reports a quota or overload, the runner stops at once and does
+  not save that run, because it would measure the quota and not the pipeline. A
+  run that finished but says in its own issues that the provider throttled it is
+  saved as `<question>__<n>.limited.json`, is not counted as done, and also ends
+  the batch.
+- Each file records the provider and model names, never keys. Exit code 0 means
+  the batch finished, 2 means the provider ended it early, 1 means an error.
+
 ## How to read the checks
 
 - Facts are matched as whole words, case-insensitively, and any listed
