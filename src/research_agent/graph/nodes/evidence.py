@@ -18,32 +18,32 @@ Evidence extraction uses a parent-allocation design.
 Phase 1 - describe work:
 
     SubQuestion + successful SourceFetchResult
-        â†“
+        ↓
     EvidenceRequest
 
 Phase 2 - centrally authorize the full batch:
 
     EvidenceRequest[]
-        â†“
+        ↓
     prepare_evidence_batch(...)
-        â†“
+        ↓
     count nonblank webpages requiring LLM work
-        â†“
+        ↓
     BudgetPolicy.authorize_llm_calls(
         requested=N,
         purpose="optional_research",
     )
-        â†“
+        ↓
     deterministic authorized prefix
-        â†“
+        ↓
     EvidenceBatch
 
 Phase 3 - provider side effects:
 
     EvidenceBatch.calls
-        â†“
+        ↓
     EvidenceExtractor.extract(EvidenceCall)
-        â†“
+        ↓
     LLM
 
 The EvidenceBatch exposes ``llm_calls_used`` so orchestration can persist one
