@@ -576,8 +576,11 @@ CITATIONS
 [citation-id] <supported claim>
   Evidence: <evidence-id>
 Local Web Interface
-Install the development dependencies, then run from the project folder:
+Install the development dependencies, then run from the project folder. The local
+application starts only with an explicit opt-in; without RESEARCH_AGENT_LOCAL=1,
+app.py shows only the fictional public demo:
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+$env:RESEARCH_AGENT_LOCAL = "1"
 .\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1 --server.port 8502 --browser.gatherUsageStats false
 Open:
 http://localhost:8502

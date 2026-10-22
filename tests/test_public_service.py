@@ -116,6 +116,41 @@ def test_hosted_entry_fails_closed_to_the_demo_when_flags_are_off_or_missing(mon
     assert not app.get('toggle')
 
 
+@pytest.mark.parametrize('local_flag', [None, '', '0', 'false', 'yes please'])
+def test_app_py_without_explicit_local_opt_in_never_serves_the_local_app(monkeypatch, local_flag):
+    # A hosted deployment cannot change its main file path, so app.py itself must
+    # fail closed: no flag, or a mistyped one, lands on the fictional demo only.
+    import research_agent.history as history
+    monkeypatch.setattr(history, 'get_history_store', lambda: pytest.fail('History accessed'))
+    monkeypatch.setattr(service, 'run_question', lambda *a, **k: pytest.fail('Research started'))
+    for name in ('PUBLIC_ENABLED', 'PUBLIC_AUTH_PREVIEW', 'PUBLIC_DEMO_ONLY'):
+        monkeypatch.delenv(name, raising=False)
+    if local_flag is None:
+        monkeypatch.delenv('RESEARCH_AGENT_LOCAL', raising=False)
+    else:
+        monkeypatch.setenv('RESEARCH_AGENT_LOCAL', local_flag)
+    app = AppTest.from_file(APP.parent / 'app.py').run()
+    assert not app.exception
+    assert any(item.value == 'Sample research question' for item in app.subheader)
+    assert not app.text_input
+    assert not app.text_area
+    assert not app.checkbox
+    assert not app.get('toggle')
+    assert not any('Saved research' in item.value for item in app.markdown)
+
+
+@pytest.mark.parametrize('local_flag', ['1', 'true', ' TRUE '])
+def test_explicit_local_opt_in_serves_the_local_app(monkeypatch, tmp_path, local_flag):
+    import research_agent.history as history
+    store = history.HistoryStore(tmp_path / 'history.sqlite')
+    monkeypatch.setattr(history, 'get_history_store', lambda: store)
+    monkeypatch.setenv('RESEARCH_AGENT_LOCAL', local_flag)
+    app = AppTest.from_file(APP.parent / 'app.py').run()
+    assert not app.exception
+    assert app.text_area
+    assert not any(item.value == 'Sample research question' for item in app.subheader)
+
+
 def test_login_is_required_before_keys_or_results(public_env, monkeypatch):
     monkeypatch.setattr(st, 'user', {'is_logged_in': False})
     app = AppTest.from_file(APP).run()
@@ -216,6 +251,7 @@ def test_expired_identity_clears_session_before_display(public_env, monkeypatch)
 @pytest.mark.parametrize('logged_in', [False, True])
 def test_auth_preview_cannot_run_research(public_env, monkeypatch, entry, logged_in):
     import research_agent.history as history
+    monkeypatch.delenv('RESEARCH_AGENT_LOCAL', raising=False)
     monkeypatch.setenv('PUBLIC_ENABLED', 'false')
     monkeypatch.setenv('PUBLIC_AUTH_PREVIEW', 'true')
     monkeypatch.setenv('PUBLIC_DEMO_ONLY', 'true')

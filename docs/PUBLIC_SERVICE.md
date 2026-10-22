@@ -95,8 +95,12 @@ The desktop presentation assets and existing local history remain unchanged.
 
 ## Sign-in-only staging
 
-On the existing Cloud `app.py` entry point, `PUBLIC_AUTH_PREVIEW=true` routes
-to the public sign-in interface before local history or developer tools load.
+Streamlit Community Cloud cannot change an existing app's main file path, so
+`app.py` itself fails closed: it serves the local history application only when
+`RESEARCH_AGENT_LOCAL=1` (or `true`) is set in the environment, which a hosted
+deployment must never set. Otherwise it runs `public_app.py` before any local
+history or developer tools load. On Cloud, `PUBLIC_AUTH_PREVIEW=true` shows the
+public sign-in interface; with no public flag set it shows only the fictional demo.
 Keep `PUBLIC_ENABLED=false`: signed-in users see a confirmation and logout,
 without API-key inputs, research execution or report access. `PUBLIC_DEMO_ONLY`
 can remain true for rollback: set `PUBLIC_AUTH_PREVIEW=false` to return to the demo.

@@ -1,7 +1,16 @@
-"""Local Streamlit entry point. Start with: python -m streamlit run app.py."""
+"""Local Streamlit entry point.
+
+Start locally with RESEARCH_AGENT_LOCAL=1 set, for example in PowerShell:
+
+    $env:RESEARCH_AGENT_LOCAL = "1"
+    python -m streamlit run app.py
+
+Without that explicit opt-in this file runs the public entry point instead.
+"""
 
 from datetime import timezone
 from html import escape
+import os
 from pathlib import Path
 import sys
 
@@ -9,15 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import streamlit as st
 
-# Cloud authentication staging runs before importing local history or widgets.
-# PublicConfig reads environment only; it never loads the local .env file.
-from research_agent.public_service import PublicConfig
-try:
-    _public_config = PublicConfig()
-except Exception:
-    st.error("The public service configuration is invalid. Contact the operator.")
-    st.stop()
-if _public_config.enabled or _public_config.auth_preview:
+# Fail closed. The local history/backup application is served only when the
+# person running THIS machine explicitly opts in. In every other case, including
+# a hosted deployment with a missing or mistyped flag, run the public entry
+# point, which shows only the fictional demo (or the sign-in interface when it is
+# explicitly configured) before any local history or widgets are loaded.
+if os.environ.get("RESEARCH_AGENT_LOCAL", "").strip().lower() not in {"1", "true"}:
     import runpy
     runpy.run_path(str(Path(__file__).resolve().parent / "public_app.py"), run_name="__main__")
     st.stop()
