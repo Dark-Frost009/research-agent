@@ -42,10 +42,6 @@ from research_agent.graph.nodes.synthesis import (
     SynthesisValidationError,
     prepare_finalization_call,
 )
-from research_agent.graph.nodes.synthesis_input import (
-    build_source_labels,
-    prepare_synthesis_evidence,
-)
 from research_agent.graph.nodes.synthesis_verifier import (
     SynthesisVerificationError,
 )
@@ -160,26 +156,14 @@ def reserve_finalization(
         state
     )
 
-    # Only the synthesis INPUT is shaped here: exact duplicates are removed
-    # and excerpts are interleaved across sources. State evidence is left
-    # untouched, and every kept item is still a real state Evidence object,
-    # so citations remain valid against the full evidence list.
     call = prepare_finalization_call(
         original_question=original_question,
-        evidence=prepare_synthesis_evidence(
+        evidence=list(
             evidence
         ),
         usage=usage,
         budget_policy=(
             context.budget_policy
-        ),
-        source_labels=build_source_labels(
-            list(
-                state.get(
-                    "sources",
-                    [],
-                )
-            )
         ),
     )
 
