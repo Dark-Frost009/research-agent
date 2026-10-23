@@ -26,6 +26,9 @@ Design choices, each covered by an offline test:
 * Per question: mean [min-max] (n) for each batch. Overall: the average of
   per-question averages over questions both batches answered, so a question
   with more runs cannot dominate.
+* Rejected answers are counted per batch by their reason code (see
+  ``research_agent.graph.rejection``). Runs saved before the code existed show
+  as "not recorded".
 * No significance test. With a few runs per question it would give false
   confidence; the ranges are shown instead.
 """
@@ -33,6 +36,7 @@ Design choices, each covered by an offline test:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,6 +102,8 @@ class Batch:
     commits: set[str] = field(default_factory=set)
     models: set[str] = field(default_factory=set)
     depths: set[str] = field(default_factory=set)
+    # Rejected answers by reason code, over all finished runs.
+    rejections: Counter[str] = field(default_factory=Counter)
 
     @property
     def completed_runs(self) -> int:
@@ -106,6 +112,40 @@ class Batch:
     @property
     def interrupted_runs(self) -> int:
         return sum(self.interrupted.values())
+
+
+NOT_RECORDED = "not recorded"
+
+
+def rejection_reason(record: RunRecord) -> str | None:
+    """The reason code of a rejected answer, or None if it was not rejected.
+
+    Runs saved before reason codes existed return ``NOT_RECORDED``.
+    """
+
+    summary = record.export.get("summary")
+
+    if not isinstance(summary, dict) or summary.get("outcome") != "verification_rejected":
+        return None
+
+    reason = summary.get("rejection_reason")
+
+    return reason if isinstance(reason, str) and reason else NOT_RECORDED
+
+
+def _rejection_text(batch: Batch) -> str:
+    if not batch.rejections:
+        return "rejections: none"
+
+    parts = [
+        f"{count} x {reason}"
+        for reason, count in sorted(
+            batch.rejections.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    return "rejections: " + ", ".join(parts)
 
 
 def load_batch(path: Path) -> Batch:
@@ -136,6 +176,9 @@ def load_batch(path: Path) -> Batch:
 
         if record.status == "completed":
             batch.completed.setdefault(record.question_id, []).append(record)
+            reason = rejection_reason(record)
+            if reason is not None:
+                batch.rejections[reason] += 1
         else:
             batch.interrupted[record.question_id] = (
                 batch.interrupted.get(record.question_id, 0) + 1
@@ -353,6 +396,7 @@ def format_report(a: Batch, b: Batch, result: Comparison) -> list[str]:
             f"models {'; '.join(sorted(batch.models))} | depth {', '.join(sorted(batch.depths))} | "
             f"{_completion(batch)} | {batch.limited_skipped} throttled file(s) skipped"
         )
+        lines.append(f"   {_rejection_text(batch)}")
 
     for warning in result.warnings:
         lines.append(f"WARNING: {warning}")

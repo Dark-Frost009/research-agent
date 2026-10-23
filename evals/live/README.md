@@ -73,6 +73,10 @@ questions both batches answered.
   first baseline-vs-A2 comparison made exactly that mistake.)
 - The verified rate leaves out the question with no real answer; that question
   is scored by "abstained correctly" instead.
+- Each batch line lists rejected answers by reason code, for example
+  `rejections: 2 x quote_mismatch, 1 x unsupported_claim`. The codes are
+  explained in `src/research_agent/graph/rejection.py`. Runs saved before the
+  codes existed show as `not recorded`.
 - There is no significance test. A few runs per question cannot support one;
   treat differences smaller than the ranges as noise and read the answers.
 

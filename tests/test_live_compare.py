@@ -435,3 +435,61 @@ def test_a_batch_with_only_rejected_runs_has_no_quality_numbers(tmp_path):
 
     assert "-- outcome, all runs" in text
     assert "-- answer quality, verified runs only" in text
+
+
+# ---------------------------------------------------------------------------
+# Counting rejections by reason
+# ---------------------------------------------------------------------------
+
+
+def rejected_with(reason: str | None) -> dict:
+    data = rejected()
+
+    if reason is not None:
+        data["summary"]["rejection_reason"] = reason
+
+    return data
+
+
+def test_rejections_are_counted_by_reason_code(tmp_path):
+    folder = tmp_path / "b"
+    write_record(folder, "cubic_vs_reno", rejected_with("quote_mismatch"), run_index=1)
+    write_record(folder, "rag_basics", rejected_with("quote_mismatch"), run_index=1)
+    write_record(folder, "python_313", rejected_with("unsupported_claim"), run_index=1)
+    write_record(folder, "ethernet_mtu", AFTER, run_index=1)
+
+    batch = load_batch(folder)
+
+    assert dict(batch.rejections) == {"quote_mismatch": 2, "unsupported_claim": 1}
+
+
+def test_runs_saved_before_reason_codes_existed_show_as_not_recorded(tmp_path):
+    folder = tmp_path / "b"
+    write_record(folder, "cubic_vs_reno", rejected_with(None))
+
+    assert dict(load_batch(folder).rejections) == {"not recorded": 1}
+
+
+def test_interrupted_and_throttled_runs_are_not_counted_as_rejections(tmp_path):
+    folder = tmp_path / "b"
+    write_record(folder, "cubic_vs_reno", AFTER)
+    write_record(folder, "rag_basics", {}, status="interrupted")
+    write_record(folder, "python_313", rejected_with("quote_mismatch"), limited=True)
+
+    assert not load_batch(folder).rejections
+
+
+def test_the_report_lists_rejections_per_batch_most_common_first(tmp_path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    write_record(a, "cubic_vs_reno", rejected_with("unsupported_claim"), run_index=1)
+    write_record(a, "cubic_vs_reno", rejected_with("quote_mismatch"), run_index=2)
+    write_record(a, "cubic_vs_reno", rejected_with("quote_mismatch"), run_index=3)
+    write_record(a, "cubic_vs_reno", AFTER, run_index=4)
+    write_record(b, "cubic_vs_reno", AFTER, commit="bbbbbbb")
+
+    batch_a, batch_b = load_batch(a), load_batch(b)
+    lines = format_report(batch_a, batch_b, compare(batch_a, batch_b, QUESTIONS))
+
+    assert "   rejections: 2 x quote_mismatch, 1 x unsupported_claim" in lines
+    assert "   rejections: none" in lines
