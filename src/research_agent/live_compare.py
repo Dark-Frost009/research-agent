@@ -17,6 +17,12 @@ Design choices, each covered by an offline test:
 * Each batch's code commit, models and depth are shown, with a warning when a
   batch mixes them or the two batches differ in model or depth. Those would be
   mixed into any difference.
+* Outcomes (did the run produce a verified answer, did it abstain when it
+  should) are measured over all finished runs. Answer quality (claims,
+  sources, duplicates, facts, pitfalls) is measured over VERIFIED runs only.
+  Otherwise a rejected run, which has no answer, counts as zero facts and zero
+  sources and makes a version with more rejections look like one with worse
+  answers. The two effects are reported separately.
 * Per question: mean [min-max] (n) for each batch. Overall: the average of
   per-question averages over questions both batches answered, so a question
   with more runs cannot dominate.
@@ -35,19 +41,37 @@ from research_agent.live_metrics import check_expectations, compute_run_metrics
 from research_agent.live_questions import LiveQuestion, load_questions
 from research_agent.live_runner import DEFAULT_QUESTIONS, RunRecord
 
-# (key, label) in display order.
-METRICS: tuple[tuple[str, str], ...] = (
+# Measured over all finished runs: what happened.
+OUTCOME_METRICS: tuple[tuple[str, str], ...] = (
     ("verified", "verified rate"),
+    ("abstained", "abstained correctly"),
     ("chain_valid", "citation chain valid"),
+)
+
+# Measured over verified runs only: how good the answer was.
+QUALITY_METRICS: tuple[tuple[str, str], ...] = (
     ("claims", "claims"),
     ("sources_cited", "sources cited"),
     ("source_coverage", "source coverage"),
     ("duplicate_claims", "duplicate claims"),
     ("facts_found", "facts found (share)"),
     ("pitfalls", "pitfalls flagged"),
-    ("abstained", "abstained correctly"),
+)
+
+# Measured over all finished runs: what it cost.
+COST_METRICS: tuple[tuple[str, str], ...] = (
     ("ai_calls", "AI calls used"),
 )
+
+GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("outcome, all runs", OUTCOME_METRICS),
+    ("answer quality, verified runs only", QUALITY_METRICS),
+    ("cost, all runs", COST_METRICS),
+)
+
+# (key, label) in display order.
+METRICS: tuple[tuple[str, str], ...] = OUTCOME_METRICS + QUALITY_METRICS + COST_METRICS
+_QUALITY_KEYS = frozenset(key for key, _ in QUALITY_METRICS)
 
 NOTE = (
     "Note: a few runs per question are not enough for a significance test. "
@@ -143,6 +167,8 @@ def score_run(record: RunRecord, question: LiveQuestion) -> dict[str, float | No
         verified = 1.0 if metrics.outcome == "verified" else 0.0
 
     return {
+        # Internal: whether this run produced a verified answer at all.
+        "answered": 1.0 if metrics.outcome == "verified" else 0.0,
         "verified": verified,
         "chain_valid": 1.0 if metrics.chain_valid else 0.0,
         "claims": float(metrics.claims),
@@ -193,8 +219,14 @@ def question_summaries(
     question: LiveQuestion,
 ) -> dict[str, Summary | None]:
     scores = [score_run(record, question) for record in batch.completed.get(question.id, [])]
+    answered = [score for score in scores if score["answered"] == 1.0]
 
-    return {key: summarize([score[key] for score in scores]) for key, _ in METRICS}
+    return {
+        key: summarize(
+            [score[key] for score in (answered if key in _QUALITY_KEYS else scores)]
+        )
+        for key, _ in METRICS
+    }
 
 
 # --------------------------------------------------------------------------
@@ -340,20 +372,29 @@ def format_report(a: Batch, b: Batch, result: Comparison) -> list[str]:
         lines.append(f"{question_id}")
         lines.append(f"  {'':<{width}}{'A':<28}B")
 
-        for key, label in METRICS:
-            if left[key] is None and right[key] is None:
-                continue
-            lines.append(f"  {label:<{width}}{_cell(left[key]):<28}{_cell(right[key])}")
+        for title, group in GROUPS:
+            rows = [
+                f"  {label:<{width}}{_cell(left[key]):<28}{_cell(right[key])}"
+                for key, label in group
+                if left[key] is not None or right[key] is not None
+            ]
+            if rows:
+                lines.append(f"  -- {title}")
+                lines.extend(rows)
 
     lines.append("")
     lines.append(f"OVERALL (average of per-question means, {len(result.common)} question(s) in both)")
     lines.append(f"  {'':<{width}}{'A':<12}{'B':<12}questions")
 
-    for key, label in METRICS:
-        value = result.overall[key]
-        if value is None:
-            continue
-        lines.append(f"  {label:<{width}}{_number(value[0]):<12}{_number(value[1]):<12}{value[2]}")
+    for title, group in GROUPS:
+        rows = [
+            f"  {label:<{width}}{_number(value[0]):<12}{_number(value[1]):<12}{value[2]}"
+            for key, label in group
+            if (value := result.overall[key]) is not None
+        ]
+        if rows:
+            lines.append(f"  -- {title}")
+            lines.extend(rows)
 
     lines.append("")
     lines.append(NOTE)

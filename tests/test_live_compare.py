@@ -375,3 +375,63 @@ def test_main_returns_one_for_a_missing_folder(tmp_path):
 
     assert code == 1
     assert "Not a folder" in "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Outcomes versus answer quality
+# ---------------------------------------------------------------------------
+
+
+def rejected() -> dict:
+    """A run whose synthesis the verifier rejected: no answer, no citations."""
+
+    data = json.loads(json.dumps(BEFORE))
+    data["summary"]["outcome"] = "verification_rejected"
+    data["report"]["citations"] = []
+    data["report"]["content"] = (
+        "The available evidence could not be verified strongly enough to produce a grounded answer."
+    )
+
+    return data
+
+
+def test_a_rejected_run_counts_in_the_verified_rate_but_not_in_answer_quality(tmp_path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    write_record(a, "cubic_vs_reno", AFTER, run_index=1)
+    write_record(a, "cubic_vs_reno", rejected(), run_index=2)
+    write_record(b, "cubic_vs_reno", AFTER, commit="bbbbbbb")
+
+    left, right = compare(load_batch(a), load_batch(b), QUESTIONS).per_question["cubic_vs_reno"]
+
+    # The outcome shows the rejection...
+    assert left["verified"].mean == 0.5 and left["verified"].n == 2
+    # ...but the rejected run does not drag answer quality down with zeros.
+    assert (left["sources_cited"].mean, left["sources_cited"].n) == (2, 1)
+    assert (left["facts_found"].mean, left["facts_found"].n) == (1, 1)
+    assert (left["pitfalls"].mean, left["pitfalls"].n) == (1, 1)
+    assert left["sources_cited"] == right["sources_cited"]
+    # Cost still counts every finished run.
+    assert left["ai_calls"].n == 2
+
+
+def test_a_batch_with_only_rejected_runs_has_no_quality_numbers(tmp_path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    write_record(a, "cubic_vs_reno", rejected())
+    write_record(b, "cubic_vs_reno", AFTER, commit="bbbbbbb")
+
+    batch_a, batch_b = load_batch(a), load_batch(b)
+    result = compare(batch_a, batch_b, QUESTIONS)
+    left, _ = result.per_question["cubic_vs_reno"]
+
+    assert left["verified"].mean == 0
+    assert left["claims"] is None
+    # With no verified run in A, the question cannot enter the overall quality average.
+    assert result.overall["claims"] is None
+    assert result.overall["verified"] == (0, 1, 1)
+
+    text = "\n".join(format_report(batch_a, batch_b, result))
+
+    assert "-- outcome, all runs" in text
+    assert "-- answer quality, verified runs only" in text

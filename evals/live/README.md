@@ -66,6 +66,11 @@ questions both batches answered.
   left out of the averages but shown as "N/M runs finished".
 - It warns when a batch mixes code versions, models or depths, ran with
   uncommitted edits, or when the two batches differ in model or depth.
+- Outcomes (verified rate, abstention) are measured over all finished runs, but
+  answer quality (claims, sources, duplicates, facts, pitfalls) only over
+  verified runs. A rejected run has no answer; counting it as zero facts would
+  make a version with more rejections look like one with worse answers. (The
+  first baseline-vs-A2 comparison made exactly that mistake.)
 - The verified rate leaves out the question with no real answer; that question
   is scored by "abstained correctly" instead.
 - There is no significance test. A few runs per question cannot support one;
