@@ -247,6 +247,9 @@ class ResearchState(TypedDict):
     # spends its reserve. Optional for older callers and snapshots.
     research_stop_reason: NotRequired[str]
     finalization_outcome: NotRequired[str]
+    # Set only when finalization_outcome is "verification_rejected": a fixed
+    # code from research_agent.graph.rejection, never model text.
+    finalization_rejection_reason: NotRequired[str]
 
     # Whole-run usage counters.
     #

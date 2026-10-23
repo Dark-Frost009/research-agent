@@ -71,6 +71,10 @@ from research_agent.graph.budget import (
     BudgetPolicy,
     BudgetUsage,
 )
+from research_agent.graph.rejection import (
+    RejectionReason,
+    require_rejection_reason,
+)
 from research_agent.graph.nodes.synthesis_verifier import (
     SynthesisVerifier,
     VerificationClaim,
@@ -161,7 +165,20 @@ class SynthesisResponse(
 class SynthesisValidationError(
     LLMResponseError
 ):
-    """Raised when synthesis output violates grounding invariants."""
+    """Raised when synthesis output violates grounding invariants.
+
+    ``reason`` is a fixed code (see ``research_agent.graph.rejection``) that
+    says which check failed. It never contains model output.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: RejectionReason,
+    ) -> None:
+        super().__init__(message)
+        self.reason: RejectionReason = require_rejection_reason(reason)
 
 
 CitationIDFactory = Callable[
@@ -794,7 +811,8 @@ class Synthesizer:
             ):
                 raise SynthesisValidationError(
                     "Synthesis claim_text does not "
-                    "appear verbatim in the content field."
+                    "appear verbatim in the content field.",
+                    reason="synthesis_format",
                 )
 
             if (
@@ -803,7 +821,8 @@ class Synthesizer:
             ):
                 raise SynthesisValidationError(
                     "Synthesis LLM returned "
-                    "a duplicate claim."
+                    "a duplicate claim.",
+                    reason="synthesis_format",
                 )
 
             seen_claims.add(
@@ -824,7 +843,8 @@ class Synthesizer:
                 if handle in seen_handles:
                     raise SynthesisValidationError(
                         "Synthesis claim contains "
-                        "a duplicate evidence handle."
+                        "a duplicate evidence handle.",
+                        reason="synthesis_format",
                     )
 
                 if (
@@ -833,7 +853,8 @@ class Synthesizer:
                 ):
                     raise SynthesisValidationError(
                         "Synthesis claim references "
-                        "an unknown evidence handle."
+                        "an unknown evidence handle.",
+                        reason="synthesis_format",
                     )
 
                 evidence_item = (
@@ -850,7 +871,8 @@ class Synthesizer:
                         "Synthesis supporting_quote "
                         "does not appear verbatim in "
                         "the Evidence excerpt referenced "
-                        "by its evidence handle."
+                        "by its evidence handle.",
+                        reason="quote_mismatch",
                     )
 
                 seen_handles.add(

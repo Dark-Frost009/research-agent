@@ -53,6 +53,7 @@ def test_real_graph_summary_counts_finalization_and_preserves_earlier_stop_reaso
     result = run_offline(monkeypatch, context)
     summary = result.summary
     assert summary.end_reason == "sufficient" and summary.outcome == "verified"
+    assert summary.rejection_reason is None
     assert summary.ai_calls.used == 5
     assert summary.rounds.used == summary.searches.used == summary.page_reads.used == summary.sources.used == 1
     assert summary.ai_calls.limit == context.budget_policy.limits.max_llm_calls_per_run
@@ -69,6 +70,14 @@ def test_rejected_synthesis_has_distinct_outcome_without_rejected_text(monkeypat
     assert result.summary.ai_calls.used == 5
     assert result.report.citations == []
     assert "REJECTED DRAFT" not in result.summary.model_dump_json()
+    # The reason code reaches the summary and the evidence export, without
+    # any of the rejected text.
+    expected = "synthesis_format" if rejection else "unsupported_claim"
+    assert result.summary.rejection_reason == expected
+    exported = json.loads(result.json_export())
+    assert exported["summary"]["rejection_reason"] == expected
+    assert "REJECTED DRAFT" not in result.json_export()
+    assert "does not support the stronger claim" not in result.json_export()
 
 
 def test_failed_finalization_preserves_reserved_pair_and_provider_reason(monkeypatch):

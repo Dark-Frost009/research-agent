@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from research_agent.graph.budget import BudgetLimits
+from research_agent.graph.rejection import RejectionReason
 
 
 EndReason = Literal[
@@ -106,6 +107,29 @@ _OUTCOMES = {
 }
 
 
+# Plain-language explanations of the rejection codes, for people reading a
+# summary. The codes themselves are defined in research_agent.graph.rejection.
+_REJECTIONS = {
+    "quote_mismatch": (
+        "A supporting quote did not match its cited evidence word for word."
+    ),
+    "synthesis_format": (
+        "The drafted answer broke a citation rule, such as a claim missing "
+        "from the answer text."
+    ),
+    "verifier_format": (
+        "The verification step returned an unusable reply."
+    ),
+    "unsupported_claim": (
+        "Verification judged at least one claim not supported by its "
+        "cited evidence."
+    ),
+    "incomplete_coverage": (
+        "Verification found factual statements without a supporting citation."
+    ),
+}
+
+
 class BudgetCounter(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -142,6 +166,21 @@ class RunSummary(BaseModel):
     ai_calls: BudgetCounter
     end_reason: EndReason
     outcome: Outcome
+    # Why a proposed answer was rejected; only for "verification_rejected".
+    # Optional so summaries saved before this field existed still load.
+    rejection_reason: RejectionReason | None = None
+
+    @model_validator(mode="after")
+    def reason_only_for_rejections(self):
+        if (
+            self.rejection_reason is not None
+            and self.outcome != "verification_rejected"
+        ):
+            raise ValueError(
+                "Only a rejected answer can have a rejection reason."
+            )
+
+        return self
 
     @property
     def stop_message(self) -> str:
@@ -160,9 +199,14 @@ class RunSummary(BaseModel):
                 "Additional research was still needed when the run ended."
             )
 
-        return _OUTCOMES[
+        message = _OUTCOMES[
             self.outcome
         ]
+
+        if self.rejection_reason is not None:
+            message += " " + _REJECTIONS[self.rejection_reason]
+
+        return message
 
     def rows(self) -> list[dict]:
         return [
@@ -277,6 +321,13 @@ def summarize_run(
             else state.get(
                 "finalization_outcome",
                 "unknown",
+            )
+        ),
+        rejection_reason=(
+            None
+            if error
+            else state.get(
+                "finalization_rejection_reason",
             )
         ),
     )

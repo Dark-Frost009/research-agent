@@ -53,6 +53,10 @@ from pydantic import (
 from research_agent.graph.budget import (
     BudgetAuthorization,
 )
+from research_agent.graph.rejection import (
+    RejectionReason,
+    require_rejection_reason,
+)
 from research_agent.llm.client import (
     LLMClient,
     LLMResponseError,
@@ -171,7 +175,20 @@ class SynthesisVerificationResponse(
 class SynthesisVerificationError(
     LLMResponseError
 ):
-    """Raised when semantic verification cannot accept the synthesis."""
+    """Raised when semantic verification cannot accept the synthesis.
+
+    ``reason`` is a fixed code (see ``research_agent.graph.rejection``) that
+    says why. It never contains model output.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: RejectionReason,
+    ) -> None:
+        super().__init__(message)
+        self.reason: RejectionReason = require_rejection_reason(reason)
 
 
 class SynthesisVerifier:
@@ -278,7 +295,8 @@ class SynthesisVerifier:
         ):
             raise SynthesisVerificationError(
                 "Synthesis verifier returned "
-                "an unexpected response type."
+                "an unexpected response type.",
+                reason="verifier_format",
             )
 
         self._validate_response(
@@ -481,7 +499,8 @@ class SynthesisVerifier:
             if handle in seen_handles:
                 raise SynthesisVerificationError(
                     "Synthesis verifier returned "
-                    "a duplicate claim handle."
+                    "a duplicate claim handle.",
+                    reason="verifier_format",
                 )
 
             seen_handles.add(
@@ -494,7 +513,8 @@ class SynthesisVerifier:
             ):
                 raise SynthesisVerificationError(
                     "Synthesis verifier returned "
-                    "an unknown claim handle."
+                    "an unknown claim handle.",
+                    reason="verifier_format",
                 )
 
         returned_handle_set = set(
@@ -509,7 +529,8 @@ class SynthesisVerifier:
         if missing_handles:
             raise SynthesisVerificationError(
                 "Synthesis verifier omitted "
-                "one or more claim handles."
+                "one or more claim handles.",
+                reason="verifier_format",
             )
 
         if (
@@ -519,7 +540,8 @@ class SynthesisVerifier:
             raise SynthesisVerificationError(
                 "Synthesis verifier returned "
                 "an invalid number of "
-                "claim verdicts."
+                "claim verdicts.",
+                reason="verifier_format",
             )
 
         uncovered_claims = (
@@ -532,7 +554,8 @@ class SynthesisVerifier:
                     "Synthesis verifier reported "
                     "complete coverage while also "
                     "returning uncovered factual "
-                    "claims."
+                    "claims.",
+                    reason="verifier_format",
                 )
 
         else:
@@ -541,7 +564,8 @@ class SynthesisVerifier:
                     "Synthesis verifier reported "
                     "incomplete coverage without "
                     "identifying an uncovered "
-                    "factual claim."
+                    "factual claim.",
+                    reason="verifier_format",
                 )
 
         seen_uncovered_claims: set[
@@ -554,7 +578,8 @@ class SynthesisVerifier:
             if not uncovered_claim.strip():
                 raise SynthesisVerificationError(
                     "Synthesis verifier returned "
-                    "a blank uncovered factual claim."
+                    "a blank uncovered factual claim.",
+                    reason="verifier_format",
                 )
 
             if (
@@ -564,7 +589,8 @@ class SynthesisVerifier:
                 raise SynthesisVerificationError(
                     "Synthesis verifier returned "
                     "a duplicate uncovered "
-                    "factual claim."
+                    "factual claim.",
+                    reason="verifier_format",
                 )
 
             if (
@@ -575,7 +601,8 @@ class SynthesisVerifier:
                     "Synthesis verifier returned "
                     "an uncovered factual claim "
                     "that does not appear verbatim "
-                    "in the synthesized content."
+                    "in the synthesized content.",
+                    reason="verifier_format",
                 )
 
             seen_uncovered_claims.add(
@@ -593,12 +620,14 @@ class SynthesisVerifier:
             raise SynthesisVerificationError(
                 "Synthesis verifier rejected "
                 "one or more claims as "
-                "semantically unsupported."
+                "semantically unsupported.",
+                reason="unsupported_claim",
             )
 
         if not response.coverage_complete:
             raise SynthesisVerificationError(
                 "Synthesis verifier rejected "
                 "the answer because factual "
-                "claim coverage is incomplete."
+                "claim coverage is incomplete.",
+                reason="incomplete_coverage",
             )

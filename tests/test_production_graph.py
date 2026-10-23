@@ -901,6 +901,11 @@ def test_production_graph_rejection_returns_safe_report(reject_grounding: bool) 
     assert all(state["citations"] == [] for state in states)
     assert "REJECTED DRAFT" not in repr(states)
     assert context.workspace.finalization_call is None
+    # Only a fixed code saying which check failed is kept.
+    assert states[-1]["finalization_outcome"] == "verification_rejected"
+    assert states[-1]["finalization_rejection_reason"] == (
+        "synthesis_format" if reject_grounding else "unsupported_claim"
+    )
 
 
 @pytest.mark.parametrize("resource, limit", [

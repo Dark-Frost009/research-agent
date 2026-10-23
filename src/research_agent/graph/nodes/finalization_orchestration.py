@@ -256,10 +256,14 @@ def execute_finalization(
     context.workspace.finalization_call = None
 
     rejected = False
+    rejection_reason = None
     try:
         result = context.synthesizer.synthesize(call)
-    except (SynthesisValidationError, SynthesisVerificationError):
+    except (SynthesisValidationError, SynthesisVerificationError) as error:
         rejected = True
+        # Keep only the fixed code saying WHICH check failed. It is chosen by
+        # Python at the failing check and never contains model output.
+        rejection_reason = error.reason
         # Discard the entire rejected answer and all verifier diagnostics.
         # Keep the committed reservation; this path performs no further calls.
         # Provider failures and programming errors remain operational failures.
@@ -306,7 +310,7 @@ def execute_finalization(
                 "only Citation objects."
             )
 
-    return {
+    update = {
         "draft_content": result.content,
         "finalization_outcome": (
             "verification_rejected" if rejected else
@@ -318,3 +322,8 @@ def execute_finalization(
             result.citations
         ),
     }
+
+    if rejection_reason is not None:
+        update["finalization_rejection_reason"] = rejection_reason
+
+    return update
