@@ -49,6 +49,28 @@ python -m research_agent.live_runner --label baseline-d5612ba --max-runs 8
 - Each file records the provider and model names, never keys. Exit code 0 means
   the batch finished, 2 means the provider ended it early, 1 means an error.
 
+## Comparing two batches
+
+```
+python -m research_agent.live_compare .local/live-evals/baseline-d5612ba .local/live-evals/a2-1f00044
+```
+
+`src/research_agent/live_compare.py` prints, per question, mean [min-max] (n)
+for each batch, then an overall average of per-question means over the
+questions both batches answered.
+
+- Both batches are re-scored with the current metrics code and question file,
+  from each run's saved export, so a scoring change cannot look like a pipeline
+  change.
+- Throttled (`.limited`) files are skipped. Runs the pipeline did not finish are
+  left out of the averages but shown as "N/M runs finished".
+- It warns when a batch mixes code versions, models or depths, ran with
+  uncommitted edits, or when the two batches differ in model or depth.
+- The verified rate leaves out the question with no real answer; that question
+  is scored by "abstained correctly" instead.
+- There is no significance test. A few runs per question cannot support one;
+  treat differences smaller than the ranges as noise and read the answers.
+
 ## How to read the checks
 
 - Facts are matched as whole words, case-insensitively, and any listed
