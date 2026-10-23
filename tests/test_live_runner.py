@@ -379,8 +379,10 @@ def test_a_record_rejects_unknown_fields():
 # ---------------------------------------------------------------------------
 
 
-def run_main(tmp_path, *args, run_fn=None, settings_loader=None):
+def run_main(tmp_path, *args, run_fn=None, settings_loader=None, sleeps=None):
     lines: list[str] = []
+    # Record pauses instead of really waiting, so the tests stay fast.
+    sleeps = [] if sleeps is None else sleeps
 
     code = main(
         ["--out-dir", str(tmp_path), *args],
@@ -388,6 +390,7 @@ def run_main(tmp_path, *args, run_fn=None, settings_loader=None):
         settings_loader=settings_loader or (lambda: SETTINGS),
         commit_fn=lambda: "abc123",
         echo=lines.append,
+        sleep=sleeps.append,
     )
 
     return code, lines
@@ -575,3 +578,97 @@ def test_git_commit_is_none_when_git_is_unavailable_or_odd(monkeypatch, tmp_path
     _fake_git(monkeypatch, **kwargs)
 
     assert git_commit(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Pausing between runs (keeps consecutive runs under per-minute limits)
+# ---------------------------------------------------------------------------
+
+
+def _paused(planned, run_fn, pause):
+    sleeps: list[float] = []
+
+    result = run_batch(
+        planned,
+        label="t",
+        depth="Standard",
+        run_fn=run_fn,
+        settings=SETTINGS,
+        commit=None,
+        max_runs=8,
+        echo=lambda line: None,
+        pause_seconds=pause,
+        sleep=sleeps.append,
+    )
+
+    return result, sleeps
+
+
+def test_the_runner_pauses_between_runs_but_not_before_the_first(tmp_path):
+    _, sleeps = _paused(
+        three(tmp_path), ScriptedRun(completed(), completed(), completed()), 60
+    )
+
+    assert sleeps == [60, 60]
+
+
+def test_no_pause_after_the_provider_ends_the_batch(tmp_path):
+    _, sleeps = _paused(
+        three(tmp_path), ScriptedRun(completed(), interrupted("quota")), 60
+    )
+
+    # One pause before run 2, none after it stopped the batch.
+    assert sleeps == [60]
+
+
+def test_a_zero_pause_never_sleeps(tmp_path):
+    _, sleeps = _paused(three(tmp_path), ScriptedRun(completed(), completed(), completed()), 0)
+
+    assert sleeps == []
+
+
+def test_the_command_line_pauses_60_seconds_by_default(tmp_path):
+    sleeps: list[float] = []
+
+    run_main(
+        tmp_path,
+        "--label",
+        "t",
+        "--only",
+        "cubic_vs_reno,rag_basics",
+        run_fn=ScriptedRun(completed(), completed()),
+        sleeps=sleeps,
+    )
+
+    assert sleeps == [60]
+
+
+def test_the_pause_can_be_turned_off(tmp_path):
+    sleeps: list[float] = []
+
+    run_main(
+        tmp_path,
+        "--label",
+        "t",
+        "--only",
+        "cubic_vs_reno,rag_basics",
+        "--pause-seconds",
+        "0",
+        run_fn=ScriptedRun(completed(), completed()),
+        sleeps=sleeps,
+    )
+
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("value", ["-1", "soon"])
+def test_the_pause_must_be_a_non_negative_whole_number(tmp_path, value):
+    with pytest.raises(SystemExit):
+        main(["--label", "t", "--out-dir", str(tmp_path), "--pause-seconds", value, "--dry-run"])
+
+
+def test_dry_run_shows_the_pause_and_the_time_it_adds(tmp_path):
+    _, lines = run_main(tmp_path, "--label", "t", "--dry-run")
+
+    # 8 runs means 7 pauses of 60 seconds.
+    assert "Pause between runs: 60s (adds about 7 min)." in lines

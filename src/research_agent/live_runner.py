@@ -9,6 +9,8 @@ Safety properties, each covered by an offline test:
 
 * ``--dry-run`` shows the plan and makes no AI or search request.
 * ``--max-runs`` caps how many runs one invocation may start.
+* ``--pause-seconds`` (default 60) waits between runs, so consecutive runs do
+  not add up to more requests per minute than the provider allows.
 * A provider quota or overload stops the batch at once. That is not a
   pipeline result, so the interrupted run is not saved as one.
 * A finished run whose own issues say the provider throttled it is saved
@@ -251,6 +253,8 @@ def run_batch(
     commit: str | None,
     max_runs: int,
     echo: Callable[[str], None] = print,
+    pause_seconds: float = 0,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> BatchResult:
     pending = [item for item in planned if not item.done]
     selected = pending[:max_runs]
@@ -266,6 +270,13 @@ def run_batch(
         return BatchResult(tuple(written), stopped, remaining)
 
     for number, item in enumerate(selected, start=1):
+        # One run makes about a dozen requests within a minute. Starting the
+        # next run straight away can exceed the provider's per-minute limit
+        # (this caused a 429 in the pilot), so wait between runs.
+        if number > 1 and pause_seconds > 0:
+            echo(f"    pausing {pause_seconds:g}s before the next run")
+            sleep(pause_seconds)
+
         echo(f"[{number}/{len(selected)}] {item.question.id} run {item.run_index}")
 
         started = datetime.now(timezone.utc)
@@ -374,6 +385,18 @@ def _positive_int(value: str) -> int:
     return number
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a whole number.") from error
+
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more.")
+
+    return number
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m research_agent.live_runner",
@@ -403,6 +426,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=8,
         help="Most runs this invocation may start (default 8).",
+    )
+    parser.add_argument(
+        "--pause-seconds",
+        type=_non_negative_int,
+        default=60,
+        help="Seconds to wait between runs, to stay under per-minute limits (default 60).",
     )
     parser.add_argument(
         "--depth",
@@ -469,6 +498,7 @@ def main(
     settings_loader: Callable[[], Any] | None = None,
     commit_fn: Callable[[], str | None] | None = None,
     echo: Callable[[str], None] = print,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     """Return 0 on success, 2 if the provider ended the batch, 1 on an error."""
 
@@ -536,6 +566,8 @@ def main(
             settings=settings,
             commit=commit,
             max_runs=args.max_runs,
+            pause_seconds=args.pause_seconds,
+            sleep=sleep,
             echo=echo,
         )
     except Exception as error:  # noqa: BLE001 - class name only, never the message
@@ -604,6 +636,10 @@ def _dry_run(
         )
 
     echo(f"Expected use: {estimate}. Check your provider's daily allowance first.")
+    echo(
+        f"Pause between runs: {args.pause_seconds}s "
+        f"(adds about {max(len(selected) - 1, 0) * args.pause_seconds // 60} min)."
+    )
 
     for number, item in enumerate(selected, start=1):
         echo(f"  {number}. {item.question.id} run {item.run_index}")

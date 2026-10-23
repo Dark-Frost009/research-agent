@@ -35,6 +35,9 @@ python -m research_agent.live_runner --label baseline-d5612ba --max-runs 8
 - `--max-runs` (default 8) is the most runs one command may start. `--runs N`
   asks for N repeats per question; run 1 of every question happens before any
   run 2.
+- `--pause-seconds` (default 60) waits between runs. One run makes about a dozen
+  requests within a minute, so back-to-back runs can exceed a free tier's
+  per-minute limit; in the pilot this caused a `429`.
 - Running the same command again resumes: runs that already have a result file
   are skipped. This is how a batch is spread over several days of free-tier
   quota.
