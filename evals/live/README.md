@@ -73,6 +73,10 @@ questions both batches answered.
   first baseline-vs-A2 comparison made exactly that mistake.)
 - The verified rate leaves out the question with no real answer; that question
   is scored by "abstained correctly" instead.
+- Answer quality includes "disputed claims" (claims the verifier marked as
+  contradicted by other evidence) and "pitfalls marked disputed" (of the
+  flagged known errors, how many carry a dispute warning). A dispute does not
+  remove the error from the answer; it warns the reader.
 - Each batch line lists rejected answers by reason code, for example
   `rejections: 2 x quote_mismatch, 1 x unsupported_claim`. The codes are
   explained in `src/research_agent/graph/rejection.py`. Runs saved before the

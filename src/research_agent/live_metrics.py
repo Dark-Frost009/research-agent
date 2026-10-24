@@ -79,6 +79,10 @@ class RunMetrics(_Frozen):
     issues: int
     budgets: dict[str, Budget]
 
+    # Claims the verifier marked as contradicted by other evidence. Defaults
+    # keep result files saved before this field existed loadable.
+    disputed_claims: int = 0
+
 
 class Pitfall(_Frozen):
     """A known wrong statement to flag, matched sentence by sentence.
@@ -145,6 +149,9 @@ class ExpectationResult(_Frozen):
     pitfalls_flagged: list[str]
     # None when the question does not expect an abstention.
     abstain_ok: bool | None
+    # Flagged pitfalls whose claim the verifier marked as disputed: the error
+    # is still in the answer, but the reader is warned that sources disagree.
+    pitfalls_disputed: list[str] = Field(default_factory=list)
 
 
 # Phrases that count as "the answer says it could not establish this".
@@ -247,6 +254,7 @@ def compute_run_metrics(
     cited_keys: set[tuple[str, str]] = set()
     seen_claim_keys: set[frozenset] = set()
     duplicate_claims = 0
+    disputed_claims = 0
 
     citations = report["citations"]
 
@@ -274,6 +282,15 @@ def compute_run_metrics(
             claim_keys.add(_excerpt_key(item))
 
         cited_keys |= claim_keys
+
+        # Evidence that disputes the claim must also exist and have a source.
+        disputed_by = citation.get("disputed_by") or []
+        if disputed_by:
+            disputed_claims += 1
+        for evidence_id in disputed_by:
+            item = evidence_by_id.get(evidence_id)
+            if item is None or item["source_id"] not in source_ids:
+                broken_links += 1
         frozen_keys = frozenset(claim_keys)
 
         if frozen_keys:
@@ -346,6 +363,7 @@ def compute_run_metrics(
         ),
         issues=len(issues),
         budgets=budgets,
+        disputed_claims=disputed_claims,
     )
 
 
@@ -376,6 +394,8 @@ def check_expectations(
 
     sentences = _SENTENCE_END.split(content)
     flagged: list[str] = []
+    disputed: list[str] = []
+    citations = report.get("citations") or []
 
     for pitfall in expectations.pitfalls:
         pattern = re.compile(pitfall.pattern, re.IGNORECASE)
@@ -392,6 +412,15 @@ def check_expectations(
         ):
             flagged.append(pitfall.name)
 
+            # Was a claim stating the pitfall marked as disputed?
+            if any(
+                pattern.search(citation.get("claim_text", ""))
+                and not (unless and unless.search(citation.get("claim_text", "")))
+                and citation.get("disputed_by")
+                for citation in citations
+            ):
+                disputed.append(pitfall.name)
+
     abstain_ok: bool | None = None
 
     if expectations.expect_abstain:
@@ -406,4 +435,5 @@ def check_expectations(
         missing_facts=missing,
         pitfalls_flagged=flagged,
         abstain_ok=abstain_ok,
+        pitfalls_disputed=disputed,
     )

@@ -60,6 +60,8 @@ QUALITY_METRICS: tuple[tuple[str, str], ...] = (
     ("duplicate_claims", "duplicate claims"),
     ("facts_found", "facts found (share)"),
     ("pitfalls", "pitfalls flagged"),
+    ("pitfalls_disputed", "pitfalls marked disputed"),
+    ("disputed_claims", "disputed claims"),
 )
 
 # Measured over all finished runs: what it cost.
@@ -224,6 +226,13 @@ def score_run(record: RunRecord, question: LiveQuestion) -> dict[str, float | No
             else None
         ),
         "pitfalls": float(len(expected.pitfalls_flagged)),
+        # Only meaningful when a pitfall was flagged.
+        "pitfalls_disputed": (
+            float(len(expected.pitfalls_disputed))
+            if expected.pitfalls_flagged
+            else None
+        ),
+        "disputed_claims": float(metrics.disputed_claims),
         "abstained": (
             None
             if expected.abstain_ok is None

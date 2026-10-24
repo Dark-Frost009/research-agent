@@ -235,6 +235,7 @@ def _describe(record: RunRecord) -> str:
         f"sources cited {record.metrics.sources_cited}/{record.metrics.sources_with_evidence}",
         f"facts {record.expectations.facts_found}/{record.expectations.facts_total}",
         f"pitfalls {', '.join(flagged) if flagged else 'none'}",
+        f"disputed {record.metrics.disputed_claims}",
     ]
 
     if record.provider_limited:
