@@ -32,6 +32,48 @@ T = TypeVar("T", bound=BaseModel)
 # programming errors must retain their original type and traceback.
 _PROVIDER_ERRORS = (errors.APIError, httpx.TransportError, RequestsConnectionError, RequestsTimeout)
 
+# HTTP statuses that mean "temporarily failing, try again shortly": request
+# timeout, server error, bad gateway, overloaded, gateway timeout. 429 (rate or
+# quota limit) is deliberately NOT here: when the daily quota is spent, a retry
+# only wastes time, and callers already stop cleanly on LLMRateLimitError.
+TRANSIENT_STATUS_CODES = (408, 500, 502, 503, 504)
+
+# Retry policy for the local app. The SDK retries ONLY when given retry
+# options; without them it makes a single attempt, so one momentary 503 used
+# to fail a whole research step. 4 attempts in total, waiting about 2, 4 and
+# 8 seconds (plus up to 1 second of random jitter) between them. A retry
+# re-sends the same logical call, so the run's AI-call budget is unaffected.
+RETRY_ATTEMPTS = 4
+RETRY_INITIAL_DELAY_SECONDS = 2.0
+RETRY_MAX_DELAY_SECONDS = 8.0
+
+
+def _http_options(bounded_requests: bool) -> dict[str, Any]:
+    """SDK client options: retries locally, strict limits for the public app."""
+
+    if bounded_requests:
+        # Public service: a strict per-visitor time limit applies, so each
+        # request gets one attempt and a 30-second timeout.
+        return {
+            'vertexai': False,
+            'http_options': types.HttpOptions(
+                timeout=30_000,
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        }
+
+    return {
+        'http_options': types.HttpOptions(
+            retry_options=types.HttpRetryOptions(
+                attempts=RETRY_ATTEMPTS,
+                initial_delay=RETRY_INITIAL_DELAY_SECONDS,
+                max_delay=RETRY_MAX_DELAY_SECONDS,
+                exp_base=2,
+                http_status_codes=list(TRANSIENT_STATUS_CODES),
+            ),
+        ),
+    }
+
 
 class GeminiLLMClient:
     """Concrete LLM client backed by the Google Gemini API."""
@@ -65,9 +107,7 @@ class GeminiLLMClient:
         try:
             self._client = genai.Client(
                 api_key=api_key.strip(),
-                **({'vertexai': False, 'http_options': types.HttpOptions(
-                    timeout=30_000, retry_options=types.HttpRetryOptions(attempts=1),
-                )} if bounded_requests else {}),
+                **_http_options(bounded_requests),
             )
         except ValueError as exc:
             raise LLMConfigurationError(
