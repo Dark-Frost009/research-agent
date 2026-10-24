@@ -155,9 +155,12 @@ def test_api_key_is_stripped_before_sdk_initialization(
         api_key="  secret-key  ",
     )
 
-    constructor.assert_called_once_with(
-        api_key="secret-key",
-    )
+    constructor.assert_called_once()
+    kwargs = constructor.call_args.kwargs
+
+    assert kwargs["api_key"] == "secret-key"
+    # The local client retries transient errors (see the retry tests below).
+    assert kwargs["http_options"].retry_options.attempts == 4
 
     assert (
         client._client
@@ -887,3 +890,65 @@ def test_unexpected_response_accessor_error_is_not_mislabeled():
     with pytest.raises(RuntimeError) as caught:
         _generate(GeminiLLMClient(model="test", client=fake), False)
     assert caught.value is original
+
+
+# ---------------------------------------------------------------------------
+# Retrying temporary provider failures
+#
+# The SDK only retries when it is given retry options; otherwise it makes one
+# attempt. A momentary 503 ("overloaded") then failed a whole research step,
+# which live evaluation hit repeatedly at busy hours.
+# ---------------------------------------------------------------------------
+
+
+def _client_kwargs(monkeypatch, **options):
+    from research_agent.llm import gemini
+
+    constructor = Mock(return_value=object())
+    monkeypatch.setattr("research_agent.llm.gemini.genai.Client", constructor)
+    gemini.GeminiLLMClient(model="gemini-test", api_key="secret-key", **options)
+
+    return constructor.call_args.kwargs
+
+
+def test_the_local_client_retries_overload_and_server_errors(monkeypatch):
+    retry = _client_kwargs(monkeypatch)["http_options"].retry_options
+
+    assert retry.attempts == 4
+    assert retry.initial_delay == 2.0
+    assert retry.max_delay == 8.0
+    assert retry.exp_base == 2
+    assert set(retry.http_status_codes) == {408, 500, 502, 503, 504}
+
+
+def test_rate_and_quota_limits_are_never_retried(monkeypatch):
+    retry = _client_kwargs(monkeypatch)["http_options"].retry_options
+
+    assert 429 not in retry.http_status_codes
+
+
+def test_the_public_client_keeps_a_single_attempt_and_its_timeout(monkeypatch):
+    kwargs = _client_kwargs(monkeypatch, bounded_requests=True)
+
+    assert kwargs["vertexai"] is False
+    assert kwargs["http_options"].timeout == 30_000
+    assert kwargs["http_options"].retry_options.attempts == 1
+
+
+def test_the_sdk_really_retries_with_these_options():
+    # Guard against the SDK changing how it reads retry options: build its own
+    # retry arguments from ours and check the attempt limit and status codes.
+    from google.genai import _api_client
+    from research_agent.llm.gemini import _http_options
+
+    retry_options = _http_options(False)["http_options"].retry_options
+    args = _api_client.retry_args(retry_options)
+
+    assert args["stop"].max_attempt_number == 4
+
+    def status_error(code):
+        response = Mock(status_code=code)
+        return errors.APIError(code, {"error": {"code": code, "message": "x", "status": "X"}}, response)
+
+    assert args["retry"].predicate(status_error(503)) is True
+    assert args["retry"].predicate(status_error(429)) is False
