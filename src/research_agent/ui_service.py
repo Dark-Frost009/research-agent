@@ -20,6 +20,9 @@ from research_agent.run_summary import RunSummary, summarize_run
 from pydantic import ValidationError
 
 
+# Fixed wording shown next to a claim that other evidence contradicts.
+DISPUTE_NOTE = "Other sources disagree with this claim."
+
 STAGES = {
     "reserve_initial_iteration": "Planning your research",
     "reserve_follow_up_iteration": "Investigating remaining questions",
@@ -54,6 +57,20 @@ class CompletedResearch:
             found[source.id] = source
         return list(found.values())
 
+    def disputing_evidence(self, citation) -> list[tuple[Evidence, Source]]:
+        """Evidence (with its source) that contradicts this claim, in order."""
+        evidence = {item.id: item for item in self.evidence}
+        sources = {item.id: item for item in self.sources}
+        found = []
+        for evidence_id in citation.disputed_by:
+            item = evidence[evidence_id]
+            found.append((item, sources[item.source_id]))
+        return found
+
+    @property
+    def disputed_count(self) -> int:
+        return sum(bool(citation.disputed_by) for citation in self.report.citations)
+
     def text_export(self) -> str:
         lines = [self.report.question, "", self.report.content, "", "SOURCES AND SUPPORT"]
         for index, citation in enumerate(self.report.citations, 1):
@@ -61,6 +78,13 @@ class CompletedResearch:
             for source in self.citation_sources(citation):
                 url = safe_source_url(source)
                 lines.append(f"  {source.title or source.domain}: {url or 'Link unavailable'}")
+            disputing = self.disputing_evidence(citation)
+            if disputing:
+                lines.append(f"  DISPUTED: {DISPUTE_NOTE}")
+                for item, source in disputing:
+                    url = safe_source_url(source)
+                    lines.append(f"    {source.title or source.domain}: {url or 'Link unavailable'}")
+                    lines.append(f"    \"{item.excerpt}\"")
         if not self.report.citations:
             lines.append("No verified citations were produced.")
         if self.issues:

@@ -137,6 +137,12 @@ def _print_report(
                 f"{evidence_ids}"
             )
 
+            if citation.disputed_by:
+                print(
+                    "  DISPUTED by evidence: "
+                    + ", ".join(citation.disputed_by)
+                )
+
 
 def main() -> int:
     """Run the command-line application."""

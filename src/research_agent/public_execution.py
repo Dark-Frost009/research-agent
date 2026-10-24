@@ -68,6 +68,9 @@ def execute_question(question, settings):
         warning_count=data['warning_count'], issues=tuple(value['issues']),
         summary=RunSummary.model_validate(value['summary']) if value['summary'] else None,
     )
+    # Refuse a report whose citations, or the evidence disputing them, cannot
+    # be traced to the returned records.
     for citation in result.report.citations:
         result.citation_sources(citation)
+        result.disputing_evidence(citation)
     return result

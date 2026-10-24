@@ -42,6 +42,7 @@ from research_agent.incomplete import (
     ResearchInterrupted,
 )
 from research_agent.ui_service import (
+    DISPUTE_NOTE,
     friendly_error,
     preview_depth,
     run_question,
@@ -1059,6 +1060,14 @@ def render_citations(result) -> None:
         for item in result.evidence
     }
 
+    disputed = result.disputed_count
+    if disputed:
+        # Fixed wording; the count is the only variable part.
+        st.warning(
+            f"{disputed} claim(s) below are contradicted by other sources "
+            "the research found. Read those claims with care."
+        )
+
     for index, citation in enumerate(
         result.report.citations,
         start=1,
@@ -1087,6 +1096,21 @@ def render_citations(result) -> None:
                 for evidence_id in citation.evidence_ids:
                     item = evidence_lookup.get(evidence_id)
                     if item is not None:
+                        st.text(item.excerpt)
+
+            disputing = result.disputing_evidence(citation)
+            if disputing:
+                st.warning(DISPUTE_NOTE)
+                with st.expander(
+                    f"Contradicting evidence for claim {index}",
+                    expanded=True,
+                ):
+                    for item, source in disputing:
+                        # Titles and excerpts are untrusted: plain text only.
+                        st.text(source.title or source.domain)
+                        url = safe_source_url(source)
+                        if url:
+                            st.link_button("Open source", url)
                         st.text(item.excerpt)
 
 

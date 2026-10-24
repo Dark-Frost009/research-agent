@@ -12,6 +12,7 @@ from research_agent.public_service import (
     PublicConfig, PublicInputError, ServiceBusyError, AdmissionError,
     ResearchTimeoutError, run_visitor_question,
 )
+from research_agent.ui_service import DISPUTE_NOTE
 
 
 def clear_private_session():
@@ -157,6 +158,13 @@ if result is not None:
                 st.text(source.title or source.domain)
                 st.text(source.final_url or source.url)
                 st.text(item.excerpt)
+            disputing = result.disputing_evidence(citation)
+            if disputing:
+                st.warning(DISPUTE_NOTE)
+                for item, source in disputing:
+                    st.text(source.title or source.domain)
+                    st.text(source.final_url or source.url)
+                    st.text(item.excerpt)
     if result.summary:
         st.text(result.summary.text_export())
     st.download_button('Download report', result.text_export(),
