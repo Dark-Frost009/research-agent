@@ -125,6 +125,10 @@ class Citation(_BaseSchema):
     id: str = Field(min_length=1)
     claim_text: str = Field(min_length=1)
     evidence_ids: list[str] = Field(min_length=1)
+    # Evidence that the verifier judged to contradict this claim. The claim
+    # is kept and shown as disputed rather than silently trusted. Empty for
+    # undisputed claims, and for reports saved before this field existed.
+    disputed_by: list[str] = Field(default_factory=list)
  
  
 class CritiqueResult(_BaseSchema):

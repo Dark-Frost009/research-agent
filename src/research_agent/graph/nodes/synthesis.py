@@ -721,13 +721,27 @@ class Synthesizer:
         #
         # The SAME parent two-call authorization is supplied to the verifier.
         # It does not perform a second budget decision.
-        self._verifier.verify(
+        #
+        # The verifier also receives every evidence excerpt by its controlled
+        # handle, so it can name excerpts that contradict a claim. That can
+        # only mark a claim as disputed; it never adds support.
+        verification = self._verifier.verify(
             content=response.content,
             claims=verification_claims,
             finalization_authorization=(
                 call.authorization
             ),
+            evidence_catalog={
+                handle: item.excerpt
+                for handle, item in evidence_lookup.items()
+            },
         )
+
+        # Claim handles are C1, C2, ... in claim order (see the verifier).
+        contradicting_handles = {
+            verdict.claim_handle: verdict.contradicted_by
+            for verdict in verification.claim_verdicts
+        }
 
         # Trusted Citation IDs are generated only after BOTH:
         #
@@ -749,12 +763,18 @@ class Synthesizer:
         ] = []
 
         for (
-            citation_id,
-            claim,
-        ) in zip(
-            citation_ids,
-            response.claims,
-            strict=True,
+            index,
+            (
+                citation_id,
+                claim,
+            ),
+        ) in enumerate(
+            zip(
+                citation_ids,
+                response.claims,
+                strict=True,
+            ),
+            start=1,
         ):
             evidence_ids = [
                 evidence_lookup[
@@ -762,6 +782,16 @@ class Synthesizer:
                 ].id
                 for support
                 in claim.evidence_support
+            ]
+
+            # Already checked by the verifier: real catalog handles, not the
+            # claim's own, no repeats. Resolved to trusted Evidence IDs here.
+            disputed_by = [
+                evidence_lookup[handle].id
+                for handle in contradicting_handles.get(
+                    f"C{index}",
+                    [],
+                )
             ]
 
             citations.append(
@@ -773,6 +803,7 @@ class Synthesizer:
                     evidence_ids=(
                         evidence_ids
                     ),
+                    disputed_by=disputed_by,
                 )
             )
 

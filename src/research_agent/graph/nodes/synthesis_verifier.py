@@ -44,6 +44,8 @@ and leaving no capacity for mandatory semantic verification.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -151,6 +153,13 @@ class ClaimSupportVerdict(
         min_length=1,
     )
 
+    # Evidence handles (E1, E2, ...) of catalog excerpts that the verifier
+    # judged to directly contradict this claim. LLM-controlled; Python checks
+    # every handle. It can only add a "disputed" warning to a claim.
+    contradicted_by: list[str] = Field(
+        default_factory=list,
+    )
+
 
 class SynthesisVerificationResponse(
     _VerificationSchema
@@ -226,6 +235,7 @@ class SynthesisVerifier:
             VerificationClaim
         ],
         finalization_authorization: BudgetAuthorization,
+        evidence_catalog: Mapping[str, str] | None = None,
     ) -> SynthesisVerificationResponse:
         """Run one adversarial semantic-verification pass.
 
@@ -243,6 +253,10 @@ class SynthesisVerifier:
         allowed to execute.
 
         This method performs no new budget authorization itself.
+
+        ``evidence_catalog`` maps every controlled evidence handle to its
+        excerpt, so the verifier can name excerpts that contradict a claim.
+        Without it, every ``contradicted_by`` list must be empty.
         """
 
         self._validate_finalization_authorization(
@@ -270,10 +284,15 @@ class SynthesisVerifier:
             for record in claim_records
         ]
 
+        catalog = self._validate_catalog(
+            evidence_catalog
+        )
+
         user_prompt = (
             build_synthesis_verification_prompt(
                 content=clean_content,
                 claims=claim_records,
+                evidence_catalog=catalog,
             )
         )
 
@@ -305,7 +324,97 @@ class SynthesisVerifier:
             expected_handles=expected_handles,
         )
 
+        self._validate_contradictions(
+            response=response,
+            claim_records=claim_records,
+            catalog_handles=set(catalog),
+        )
+
         return response
+
+    @staticmethod
+    def _validate_catalog(
+        evidence_catalog: Mapping[str, str] | None,
+    ) -> dict[str, str]:
+        """Validate the Python-built handle-to-excerpt catalog."""
+
+        if evidence_catalog is None:
+            return {}
+
+        if not isinstance(
+            evidence_catalog,
+            Mapping,
+        ):
+            raise TypeError(
+                "evidence_catalog must be a mapping."
+            )
+
+        catalog: dict[str, str] = {}
+
+        for handle, excerpt in evidence_catalog.items():
+            if not isinstance(handle, str) or not handle.strip():
+                raise ValueError(
+                    "evidence_catalog handles must be non-blank strings."
+                )
+
+            if not isinstance(excerpt, str) or not excerpt.strip():
+                raise ValueError(
+                    "evidence_catalog excerpts must be non-blank strings."
+                )
+
+            catalog[handle] = excerpt
+
+        return catalog
+
+    @staticmethod
+    def _validate_contradictions(
+        *,
+        response: SynthesisVerificationResponse,
+        claim_records: list[dict[str, object]],
+        catalog_handles: set[str],
+    ) -> None:
+        """Check every contradicted_by handle deterministically.
+
+        Each handle must be a real catalog handle, must not be one of the
+        claim's own supporting handles, and must not repeat. A violation
+        means the verifier reply is malformed, so the whole answer is
+        rejected like any other malformed verifier reply.
+        """
+
+        own_handles = {
+            record["claim_handle"]: {
+                support["evidence_handle"]
+                for support in record["evidence_support"]  # type: ignore[union-attr]
+            }
+            for record in claim_records
+        }
+
+        for verdict in response.claim_verdicts:
+            seen: set[str] = set()
+
+            for handle in verdict.contradicted_by:
+                if handle in seen:
+                    raise SynthesisVerificationError(
+                        "Synthesis verifier listed the same "
+                        "contradicting evidence twice for one claim.",
+                        reason="verifier_format",
+                    )
+
+                seen.add(handle)
+
+                if handle not in catalog_handles:
+                    raise SynthesisVerificationError(
+                        "Synthesis verifier named contradicting "
+                        "evidence that is not in the catalog.",
+                        reason="verifier_format",
+                    )
+
+                if handle in own_handles.get(verdict.claim_handle, set()):
+                    raise SynthesisVerificationError(
+                        "Synthesis verifier said a claim is "
+                        "contradicted by its own supporting evidence.",
+                        reason="verifier_format",
+                    )
 
     @staticmethod
     def _validate_finalization_authorization(

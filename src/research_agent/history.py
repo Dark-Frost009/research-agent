@@ -59,6 +59,9 @@ class _Snapshot(BaseModel):
         if any(eid not in evidence for citation in self.report.citations
                for eid in citation.evidence_ids):
             raise ValueError("Saved citation has no evidence.")
+        if any(eid not in evidence for citation in self.report.citations
+               for eid in citation.disputed_by):
+            raise ValueError("Saved citation is disputed by missing evidence.")
         return self
 
     @classmethod

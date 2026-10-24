@@ -158,8 +158,11 @@ def run_question(question: str, on_progress: Callable[[str], None], *, depth: De
         summary=summarize_run(final_state, application.context.budget_policy.limits),
     )
     # Do not display a report whose citations cannot be traced to source records.
+    evidence_ids = {item.id for item in result.evidence}
     for citation in result.report.citations:
         result.citation_sources(citation)
+        if any(eid not in evidence_ids for eid in citation.disputed_by):
+            raise RuntimeError("A disputed citation points to missing evidence.")
     return result
 
 
