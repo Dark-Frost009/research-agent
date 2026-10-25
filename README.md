@@ -200,4 +200,4 @@ docs/                  architecture, user guide, evaluation, public service
 
 ## License
 
-No license has been chosen yet, so all rights are reserved by default.
+[MIT](LICENSE) © 2026 Sayantan Chaklader.
