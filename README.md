@@ -11,7 +11,11 @@ deterministic checks and a separate AI verification pass before it is trusted.
 
 > An LLM should not be trusted merely because it produced a plausible answer.
 
-<!-- DEMO -->
+![Demo: the local app answering a real question with verified citations](docs/demo.gif)
+
+*A real run on the local app: the question, live progress, a verified answer,
+each claim with its source and the exact supporting excerpt, and the run's
+budget use (8 of 8 pages read, 12 AI calls).*
 
 ## What makes it different
 
