@@ -47,19 +47,35 @@ RETRY_ATTEMPTS = 4
 RETRY_INITIAL_DELAY_SECONDS = 2.0
 RETRY_MAX_DELAY_SECONDS = 8.0
 
+# Password-gated live research on the operator's free-tier key: free-tier
+# overload (503) is common, so a short retry is worth it, but the whole run
+# must still fit the public three-minute deadline. 3 attempts, waiting about
+# 2 and 4 seconds. The parent process still kills the run at the deadline.
+BOUNDED_RETRY_ATTEMPTS = 3
+BOUNDED_RETRY_MAX_DELAY_SECONDS = 4.0
 
-def _http_options(bounded_requests: bool) -> dict[str, Any]:
+
+def _http_options(bounded_requests: bool, transient_retries: bool = False) -> dict[str, Any]:
     """SDK client options: retries locally, strict limits for the public app."""
 
     if bounded_requests:
         # Public service: a strict per-visitor time limit applies, so each
-        # request gets one attempt and a 30-second timeout.
+        # request gets a 30-second timeout. Visitor-key runs get one attempt;
+        # operator-key live runs get a short transient-error retry.
+        retry = (
+            types.HttpRetryOptions(
+                attempts=BOUNDED_RETRY_ATTEMPTS,
+                initial_delay=RETRY_INITIAL_DELAY_SECONDS,
+                max_delay=BOUNDED_RETRY_MAX_DELAY_SECONDS,
+                exp_base=2,
+                http_status_codes=list(TRANSIENT_STATUS_CODES),
+            )
+            if transient_retries
+            else types.HttpRetryOptions(attempts=1)
+        )
         return {
             'vertexai': False,
-            'http_options': types.HttpOptions(
-                timeout=30_000,
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
+            'http_options': types.HttpOptions(timeout=30_000, retry_options=retry),
         }
 
     return {
@@ -85,6 +101,7 @@ class GeminiLLMClient:
         api_key: str | None = None,
         client: Any | None = None,
         bounded_requests: bool = False,
+        transient_retries: bool = False,
     ) -> None:
         clean_model = model.strip()
 
@@ -107,7 +124,7 @@ class GeminiLLMClient:
         try:
             self._client = genai.Client(
                 api_key=api_key.strip(),
-                **_http_options(bounded_requests),
+                **_http_options(bounded_requests, transient_retries),
             )
         except ValueError as exc:
             raise LLMConfigurationError(

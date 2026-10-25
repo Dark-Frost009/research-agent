@@ -171,8 +171,21 @@ def _build_llm(
         api_key=_secret_value(
             settings.llm_api_key
         ),
-        **({'bounded_requests': True} if settings.app_env == 'public' else {}),
+        **_public_llm_options(settings.app_env),
     )
+
+
+def _public_llm_options(app_env: str) -> dict:
+    """Request limits for the hosted entry points; none for the local app.
+
+    'public' is a visitor's own keys (one attempt per request); 'public_live'
+    is the password-gated mode on the operator's keys (short retries).
+    """
+    if app_env == 'public':
+        return {'bounded_requests': True}
+    if app_env == 'public_live':
+        return {'bounded_requests': True, 'transient_retries': True}
+    return {}
 
 
 def _build_llm_clients(
@@ -258,7 +271,7 @@ def _build_search_client(
         api_key=_secret_value(
             settings.tavily_api_key
         ),
-        **({'bounded_requests': True} if settings.app_env == 'public' else {}),
+        **({'bounded_requests': True} if settings.app_env in ('public', 'public_live') else {}),
     )
 
 

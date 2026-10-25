@@ -31,10 +31,24 @@ except Exception:
 if not config.enabled and not config.auth_preview:
     # Fail closed to the fictional portfolio demo: no sign-in, keys, providers
     # or history. A missing or mistyped flag must never expose anything more.
-    st.info('Public portfolio demo · Live Gemini/Tavily research and saved '
-            'research history are disabled on this deployment.')
+    # The one exception is password-gated live research on the operator's keys,
+    # offered only when every PUBLIC_LIVE_* setting is present and valid.
+    try:
+        from research_agent.public_access import LiveAccessConfig
+        live = LiveAccessConfig()
+        live_ready = live.ready
+    except Exception:
+        live_ready = False
+    if live_ready:
+        st.info('Public portfolio demo below · Live research needs a password. '
+                'Saved research history is disabled on this deployment.')
+        from research_agent.public_ui import render_live_research
+        render_live_research(live, config.usage_db)
+    else:
+        st.info('Public portfolio demo · Live Gemini/Tavily research and saved '
+                'research history are disabled on this deployment.')
     from research_agent.demo import render_demo
-    render_demo(public_mode=True)
+    render_demo(public_mode=True, live_available=live_ready)
     st.stop()
 st.write('Research a question using your own Gemini and Tavily API keys.')
 
@@ -130,36 +144,5 @@ if submitted:
                 st.session_state.result = result
                 status.update(label='Research finished', state='complete')
 
-partial = st.session_state.get('partial')
-if partial is not None:
-    st.warning(partial.stop_message)
-    st.download_button('Download incomplete evidence', partial.json_export(),
-                       file_name='incomplete-evidence.json', mime='application/json')
-
-result = st.session_state.get('result')
-if result is not None:
-    st.subheader('Research report')
-    st.text(result.report.question)
-    # Plain text avoids executing untrusted HTML or loading remote Markdown images.
-    st.text(result.report.content)
-    if not result.report.citations:
-        st.warning('No answer with verified citations was produced.')
-    for issue in result.issues:
-        st.warning(issue)
-    with st.expander('Sources and supporting passages', expanded=True):
-        evidence = {item.id: item for item in result.evidence}
-        sources = {item.id: item for item in result.sources}
-        for index, citation in enumerate(result.report.citations, 1):
-            st.text(f'[{index}] {citation.claim_text}')
-            for evidence_id in citation.evidence_ids:
-                item = evidence[evidence_id]
-                source = sources[item.source_id]
-                st.text(source.title or source.domain)
-                st.text(source.final_url or source.url)
-                st.text(item.excerpt)
-    if result.summary:
-        st.text(result.summary.text_export())
-    st.download_button('Download report', result.text_export(),
-                       file_name='research-report.txt', mime='text/plain')
-    st.download_button('Download evidence', result.json_export(),
-                       file_name='research-evidence.json', mime='application/json')
+from research_agent.public_ui import render_outcome
+render_outcome(st.session_state.get('partial'), st.session_state.get('result'))

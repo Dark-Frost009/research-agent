@@ -135,9 +135,15 @@ research-agent "What is retrieval-augmented generation and what problem does it 
 
 ## Public deployment
 
-The hosted app is at <https://research-agent-frosty.streamlit.app/>. It shows a
+The hosted app is at <https://research-agent-frosty.streamlit.app/>. It opens on a
 clearly labeled fictional demo (sample report, evidence and run summary), with
 no live AI or search calls.
+
+Above the demo, **live research is available with a password** from the author.
+It runs on the author's free-tier Gemini and Tavily keys, with Quick-depth limits
+per run, 5 runs per hour and 20 per day shared by everyone, one at a time, and a
+site-wide lock after repeated wrong passwords. Only a salted scrypt hash of the
+password is stored. Details: [docs/PUBLIC_SERVICE.md](docs/PUBLIC_SERVICE.md#password-gated-live-research).
 
 A separate bring-your-own-keys entry point with Google sign-in
 (`public_app.py`) is built and tested. Live public research stays
@@ -152,7 +158,7 @@ when idle, so the first visit can take a minute.
 python -m pytest -q
 ```
 
-- **2,420 tests** pass on the current `main`. They need no network or API keys:
+- **2,460 tests** pass on the current `main`. They need no network or API keys:
   every provider is scripted or mocked.
 - **Coverage** includes:
   - budgets and reducers

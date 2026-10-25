@@ -155,14 +155,20 @@ def demo_text(data: dict) -> str:
     return "\n".join(lines)
 
 
-def render_demo(*, public_mode: bool = False) -> None:
+def render_demo(*, public_mode: bool = False, live_available: bool = False) -> None:
     import streamlit as st
 
     data = demo_data()
 
     st.warning(NOTICE)
 
-    if public_mode:
+    if public_mode and live_available:
+        st.caption(
+            "This fixed portfolio example works without API keys or internet "
+            "access. Live research is available above with a password; saved "
+            "research history is disabled on this public deployment."
+        )
+    elif public_mode:
         st.caption(
             "This fixed portfolio example works without API keys or internet "
             "access. Live research and saved research history are disabled "

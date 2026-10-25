@@ -39,8 +39,12 @@ def execute_question(question, settings):
     payload = json.dumps(dict(question=question,
         gemini_key=settings.llm_api_key.get_secret_value(),
         tavily_key=settings.tavily_api_key.get_secret_value(),
-        model=settings.llm_model), ensure_ascii=False)
-    env = dict(os.environ)
+        model=settings.llm_model, live=settings.app_env == 'public_live'),
+        ensure_ascii=False)
+    # The worker receives keys only through the pipe. Hosted secrets promoted to
+    # environment variables (operator keys, password hash) are not inherited.
+    env = {name: value for name, value in os.environ.items()
+           if not name.startswith('PUBLIC_LIVE_')}
     env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
     process = subprocess.Popen(
         [sys.executable, '-m', 'research_agent.public_worker'],

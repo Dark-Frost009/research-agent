@@ -55,7 +55,14 @@ def research_slot():
         _capacity.release()
 
 
-def visitor_settings(gemini_key: str, tavily_key: str, model: str) -> VisitorSettings:
+def visitor_settings(gemini_key: str, tavily_key: str, model: str, *,
+                     live: bool = False) -> VisitorSettings:
+    """Fixed Quick-depth limits for hosted runs.
+
+    `live=True` marks the password-gated mode on the operator's keys
+    ('public_live'), which enables short Gemini retries; the run limits
+    themselves are identical to visitor-key runs.
+    """
     for name, value in [('Gemini', gemini_key), ('Tavily', tavily_key)]:
         if not isinstance(value, str) or not value.strip():
             raise PublicInputError(f'Enter your {name} API key.')
@@ -64,7 +71,7 @@ def visitor_settings(gemini_key: str, tavily_key: str, model: str) -> VisitorSet
     if not model.strip() or len(model) > 150:
         raise PublicInputError('The service operator must configure the research model.')
     return VisitorSettings(
-        app_env='public', llm_provider='gemini', llm_model=model.strip(),
+        app_env='public_live' if live else 'public', llm_provider='gemini', llm_model=model.strip(),
         llm_api_key=SecretStr(gemini_key.strip()),
         tavily_api_key=SecretStr(tavily_key.strip()), search_provider='tavily',
         max_research_iterations=1, max_search_queries_per_run=2,
@@ -84,4 +91,26 @@ def run_visitor_question(question, on_progress, *, gemini_key, tavily_key, model
         on_progress("Researching (up to three minutes)")
         # Already fixed to Quick limits. Avoid converting back to environment-
         # reading Settings in apply_depth; preserve the explicit-only settings.
+        return execute_question(question.strip(), settings)
+
+
+# Everyone who knows the live-research password shares one admission identity,
+# so these limits apply to all of them together, with one run at a time.
+LIVE_IDENTITY = ('password', 'live-research')
+LIVE_HOURLY = 5
+LIVE_DAILY = 20
+
+
+def run_live_question(question, on_progress, *, config):
+    """Run one question on the operator's keys. The caller must have checked the password."""
+    if not config.ready:
+        raise PublicInputError('Live research is not available on this deployment.')
+    if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
+        raise PublicInputError('Enter a question between 1 and 2,000 characters.')
+    settings = visitor_settings(
+        config.gemini_api_key.get_secret_value(), config.tavily_api_key.get_secret_value(),
+        config.gemini_model, live=True)
+    with research_slot(), admit_run(PublicConfig().usage_db, LIVE_IDENTITY,
+                                    hourly=LIVE_HOURLY, daily=LIVE_DAILY, shared=True):
+        on_progress('Researching (up to three minutes)')
         return execute_question(question.strip(), settings)

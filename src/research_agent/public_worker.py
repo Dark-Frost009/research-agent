@@ -30,7 +30,8 @@ def main():
             if len(raw) > MAX_REQUEST_CHARS:
                 raise ValueError('Research request is too large.')
             request = json.loads(raw)
-            settings = visitor_settings(request['gemini_key'], request['tavily_key'], request['model'])
+            settings = visitor_settings(request['gemini_key'], request['tavily_key'], request['model'],
+                                        live=request.get('live') is True)
             result = run_question(request['question'], lambda _: None, settings=settings)
             response = dict(kind='completed', value=json.loads(result.json_export()),
                             warning_count=result.warning_count)

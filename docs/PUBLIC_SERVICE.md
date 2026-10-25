@@ -20,7 +20,9 @@ guarantee of immediate memory erasure on disconnect.
 - `PUBLIC_GEMINI_MODEL` must name the model selected and tested by the operator.
 - Sign-in is mandatory. Configure Streamlit OIDC before enabling public traffic.
   Identity must include `iss`, `sub` and future `exp`.
-- No provider keys belong in the hosted application's environment or secrets.
+- No visitor-mode provider keys belong in the hosted application's environment or
+  secrets. The separate password mode below deliberately uses operator keys
+  under the `PUBLIC_LIVE_` prefix; the bring-your-own-keys path never reads them.
 - Keep Streamlit XSRF and CORS protections enabled. HTTPS is required externally.
 
 The offline tests inject authenticated identities and stub provider activity. Start with `python -m streamlit run public_app.py`.
@@ -110,3 +112,53 @@ versions still need a reviewed reproducible lock before the live-service launch.
 In Streamlit Cloud Secrets, use quoted root-level flags (`PUBLIC_AUTH_PREVIEW = "true"`,
 `PUBLIC_ENABLED = "false"`). Streamlit promotes strings to environment variables,
 not TOML booleans. The nested `auth.expose_tokens` remains a TOML boolean.
+
+
+## Password-gated live research
+
+A second, separate live mode runs on the **operator's own keys** for people the
+operator gives a password to (for example, recruiters). It appears as a collapsed
+"Live research (password required)" section above the fictional demo, only when
+the bring-your-own-keys mode is off (`PUBLIC_ENABLED` and `PUBLIC_AUTH_PREVIEW`
+false) and every setting below is present and valid. Otherwise the page is the
+demo alone; a missing or malformed setting never shows an error to visitors.
+
+Streamlit Cloud Secrets (root level, above any `[auth]` table, quoted strings):
+
+```toml
+PUBLIC_LIVE_ENABLED = "true"          # kill switch: "false" returns to demo only
+PUBLIC_LIVE_PASSWORD_HASH = "scrypt$16384$8$1$..."
+PUBLIC_LIVE_GEMINI_API_KEY = "..."    # dedicated project, billing off
+PUBLIC_LIVE_TAVILY_API_KEY = "..."
+PUBLIC_LIVE_GEMINI_MODEL = "gemini-3.5-flash-lite"
+```
+
+**Password.** Create the hash on your own machine with
+`python scripts/make_password_hash.py` (hidden input, typed twice, at least 12
+characters) and paste only the printed line. The password itself is never stored.
+`scrypt` (salted, about 16 MiB and tens of milliseconds per check) makes offline
+guessing slow if the hash leaks; verification uses a constant-time comparison.
+Only the exact cost parameters the script writes are accepted. Changing the hash
+locks every open session again on its next interaction.
+
+**Guessing.** Wrong passwords are counted site-wide in the shared usage SQLite
+file (timestamps only). After 10 in a rolling hour, live login pauses for
+everyone, including the correct password, until the hour passes. Reloading or new
+sessions do not reset it. The demo stays available. If the store is unusable,
+login is refused. Someone can deliberately trigger the pause; that is accepted.
+
+**Spending.** Runs use the same Quick limits, subprocess and three-minute deadline
+as the visitor mode. Everyone with the password shares one admission identity:
+5 starts per rolling hour, 20 per day, one active run, plus the whole-host limits
+above. These counters reset when Streamlit Cloud replaces the disk, so the hard
+ceiling is the provider side: a Gemini key in a separate project with billing
+disabled, and Tavily's free monthly credits.
+
+**Retries.** Live-mode Gemini requests retry transient failures (408/500/502/503/504)
+up to 3 attempts with about 2 and 4 seconds between them; 429 quota errors are
+never retried. Visitor-key runs keep one attempt. The deadline still applies.
+
+**Isolation.** Operator keys reach the worker only through the anonymous pipe;
+`PUBLIC_LIVE_*` variables are removed from the worker's environment. Keys, the
+hash and the password are never rendered. Questions and results stay in the
+browser session; nothing is written to the history database.

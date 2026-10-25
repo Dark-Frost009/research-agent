@@ -38,7 +38,13 @@ def _connect(path):
 
 
 @contextmanager
-def admit_run(path, identity):
+def admit_run(path, identity, *, hourly=USER_HOURLY, daily=USER_DAILY, shared=False):
+    """Admit one run for `identity`, or raise AdmissionError.
+
+    `hourly`/`daily` are this identity's own limits. `shared=True` marks an
+    identity used by several visitors (the live-research password), so the
+    messages do not say "you" about someone else's run.
+    """
     if (not isinstance(identity, tuple) or len(identity) != 2 or
             any(not isinstance(v, str) or not v or len(v) > 2048 for v in identity)):
         raise AdmissionError('Sign in again before starting research.')
@@ -55,16 +61,20 @@ def admit_run(path, identity):
                 'SELECT COUNT(*), COALESCE(SUM(identity = ?), 0) '
                 'FROM runs WHERE active_until > ?', (fingerprint, now)).fetchone()
             if own_active:
-                raise AdmissionError('You already have research running. Wait for it to finish.')
+                raise AdmissionError(
+                    'Another live research run is in progress. Try again in a few minutes.'
+                    if shared else 'You already have research running. Wait for it to finish.')
             if active >= 2:
                 raise AdmissionError('The service is busy. Please try again shortly.')
-            for seconds, personal, total in [(3600, USER_HOURLY, GLOBAL_HOURLY),
-                                              (86400, USER_DAILY, GLOBAL_DAILY)]:
+            for seconds, personal, total in [(3600, hourly, GLOBAL_HOURLY),
+                                              (86400, daily, GLOBAL_DAILY)]:
                 count, own = db.execute(
                     'SELECT COUNT(*), COALESCE(SUM(identity = ?), 0) '
                     'FROM runs WHERE started > ?', (fingerprint, now - seconds)).fetchone()
                 if own >= personal:
-                    raise AdmissionError('Your research limit has been reached. Try again later.')
+                    raise AdmissionError(
+                        'The live research limit has been reached. Try again later.'
+                        if shared else 'Your research limit has been reached. Try again later.')
                 if count >= total:
                     raise AdmissionError('The service research limit has been reached. Try again later.')
             # Crash leases outlast the process watchdog and parent cleanup window.
